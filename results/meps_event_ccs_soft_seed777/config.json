@@ -1,0 +1,22 @@
+{
+  "hospital": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+  "meps": "/media/synology/G/314554044/diabetes_project/data/processed/meps/meps_diabetes_bridge8.csv",
+  "ccs_file": "/media/synology/G/314554044/diabetes_project/data/raw/ahrq/Single_Level_CCS_2015.zip",
+  "conditions": "data/processed/meps/meps_conditions_ccs_2008_2012.csv",
+  "event_ccs": "data/processed/meps_events_2008_2012/meps_inpatient_event_ccs.csv",
+  "event_data": "data/processed/meps_events_2008_2012/meps_diabetes_event_30d_model.csv",
+  "soft_prefix": true,
+  "shuffled_control": true,
+  "min_prefix": 10,
+  "min_parent": 30,
+  "reference_oof": "results/meps_nested_hgb_blend_seed777/oof_all.csv",
+  "outdir": "results/meps_event_ccs_soft_seed777",
+  "min_group": 30,
+  "alpha": 50.0,
+  "min_frequency": 100,
+  "folds": 5,
+  "bootstrap": 2000,
+  "seed": 777,
+  "meps_pairs": 2634,
+  "matched_condition_rows": 3185
+}

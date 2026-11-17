@@ -1,0 +1,94 @@
+========== DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[CDC] Valid diabetes-only rows: 35,346
+
+========== CDC PROXY TRAINING ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [21:32:23] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[CDC] cdc_poor_health: n=35,346, target_mean=0.4065, hospital_std=0.11060
+[CDC] cdc_phys_days: n=35,346, target_mean=7.9545, hospital_std=2.29570
+[CDC] cdc_diff_walk: n=35,346, target_mean=0.3712, hospital_std=0.13072
+[CDC] cdc_no_doctor_cost: n=35,346, target_mean=0.1059, hospital_std=0.06702
+[CDC] cdc_low_income: n=35,346, target_mean=0.2557, hospital_std=0.09205
+
+========== FOLD 1/5: train 79,474, heldout 19,869 ==========
+[Done] Fold 1 E1_Baseline     : AP=0.23781, AUROC=0.68214, F1=0.29376
+[Done] Fold 1 E2_Bridge4      : AP=0.23616, AUROC=0.68202, F1=0.29475
+[Done] Fold 1 E3_Bridge6      : AP=0.23715, AUROC=0.68240, F1=0.29431
+[Done] Fold 1 E4_GenHlth      : AP=0.23606, AUROC=0.68173, F1=0.29029
+[Done] Fold 1 E5_PhysHlth     : AP=0.23529, AUROC=0.68093, F1=0.29164
+[Done] Fold 1 E6_Health       : AP=0.23612, AUROC=0.68115, F1=0.29418
+[Done] Fold 1 E7_Socio        : AP=0.23583, AUROC=0.68125, F1=0.29464
+[Done] Fold 1 E8_All_CDC      : AP=0.23608, AUROC=0.68091, F1=0.29003
+
+========== FOLD 2/5: train 79,474, heldout 19,869 ==========
+[Done] Fold 2 E1_Baseline     : AP=0.23384, AUROC=0.66758, F1=0.28850
+[Done] Fold 2 E2_Bridge4      : AP=0.23396, AUROC=0.66715, F1=0.28507
+[Done] Fold 2 E3_Bridge6      : AP=0.23330, AUROC=0.66814, F1=0.28303
+[Done] Fold 2 E4_GenHlth      : AP=0.23329, AUROC=0.66737, F1=0.28483
+[Done] Fold 2 E5_PhysHlth     : AP=0.23443, AUROC=0.66766, F1=0.28386
+[Done] Fold 2 E6_Health       : AP=0.23442, AUROC=0.66759, F1=0.28423
+[Done] Fold 2 E7_Socio        : AP=0.23358, AUROC=0.66675, F1=0.28426
+[Done] Fold 2 E8_All_CDC      : AP=0.23240, AUROC=0.66736, F1=0.28306
+
+========== FOLD 3/5: train 79,475, heldout 19,868 ==========
+[Done] Fold 3 E1_Baseline     : AP=0.23317, AUROC=0.67774, F1=0.28999
+[Done] Fold 3 E2_Bridge4      : AP=0.23456, AUROC=0.67799, F1=0.28895
+[Done] Fold 3 E3_Bridge6      : AP=0.23304, AUROC=0.67844, F1=0.28944
+[Done] Fold 3 E4_GenHlth      : AP=0.23270, AUROC=0.67814, F1=0.29094
+[Done] Fold 3 E5_PhysHlth     : AP=0.23231, AUROC=0.67813, F1=0.29062
+[Done] Fold 3 E6_Health       : AP=0.23369, AUROC=0.67884, F1=0.29001
+[Done] Fold 3 E7_Socio        : AP=0.23289, AUROC=0.67737, F1=0.28885
+[Done] Fold 3 E8_All_CDC      : AP=0.23258, AUROC=0.67883, F1=0.28979
+
+========== FOLD 4/5: train 79,474, heldout 19,869 ==========
+[Done] Fold 4 E1_Baseline     : AP=0.23572, AUROC=0.67657, F1=0.29183
+[Done] Fold 4 E2_Bridge4      : AP=0.23395, AUROC=0.67745, F1=0.28797
+[Done] Fold 4 E3_Bridge6      : AP=0.23569, AUROC=0.67792, F1=0.28937
+[Done] Fold 4 E4_GenHlth      : AP=0.23555, AUROC=0.67780, F1=0.28862
+[Done] Fold 4 E5_PhysHlth     : AP=0.23565, AUROC=0.67798, F1=0.28698
+[Done] Fold 4 E6_Health       : AP=0.23578, AUROC=0.67781, F1=0.29591
+[Done] Fold 4 E7_Socio        : AP=0.23524, AUROC=0.67818, F1=0.29255
+[Done] Fold 4 E8_All_CDC      : AP=0.23604, AUROC=0.67789, F1=0.29236
+
+========== FOLD 5/5: train 79,475, heldout 19,868 ==========
+[Done] Fold 5 E1_Baseline     : AP=0.23359, AUROC=0.68023, F1=0.28517
+[Done] Fold 5 E2_Bridge4      : AP=0.23472, AUROC=0.68139, F1=0.29151
+[Done] Fold 5 E3_Bridge6      : AP=0.23472, AUROC=0.68093, F1=0.29312
+[Done] Fold 5 E4_GenHlth      : AP=0.23447, AUROC=0.68177, F1=0.29075
+[Done] Fold 5 E5_PhysHlth     : AP=0.23470, AUROC=0.68143, F1=0.28715
+[Done] Fold 5 E6_Health       : AP=0.23462, AUROC=0.68136, F1=0.29268
+[Done] Fold 5 E7_Socio        : AP=0.23402, AUROC=0.68093, F1=0.29089
+[Done] Fold 5 E8_All_CDC      : AP=0.23361, AUROC=0.67985, F1=0.29411
+
+========== FINAL 5-FOLD SUMMARY ==========
+ Experiment  AP_mean  AP_std  AUROC_mean  F1_mean  Brier_mean
+E1_Baseline  0.23483 0.00193     0.67685  0.28985     0.09569
+ E2_Bridge4  0.23467 0.00090     0.67720  0.28965     0.09569
+ E3_Bridge6  0.23478 0.00171     0.67757  0.28985     0.09567
+ E4_GenHlth  0.23441 0.00143     0.67736  0.28909     0.09569
+E5_PhysHlth  0.23448 0.00130     0.67722  0.28805     0.09569
+  E6_Health  0.23492 0.00100     0.67735  0.29140     0.09567
+   E7_Socio  0.23431 0.00121     0.67690  0.29024     0.09571
+ E8_All_CDC  0.23414 0.00181     0.67697  0.28987     0.09570
+
+========== CDC VS BRIDGE6 ==========
+              Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds
+E3_Bridge6 - E1_Baseline     -0.00005     0.00071              1
+E1_Baseline - E3_Bridge6      0.00005     0.00071              4
+ E2_Bridge4 - E3_Bridge6     -0.00011     0.00129              3
+ E4_GenHlth - E3_Bridge6     -0.00037     0.00042              0
+E5_PhysHlth - E3_Bridge6     -0.00030     0.00110              1
+  E6_Health - E3_Bridge6      0.00014     0.00081              3
+   E7_Socio - E3_Bridge6     -0.00047     0.00060              1
+ E8_All_CDC - E3_Bridge6     -0.00064     0.00060              1
+
+Done. Results saved: /media/synology/G/314554044/cdc_comorbidity_results

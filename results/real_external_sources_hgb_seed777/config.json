@@ -1,0 +1,14 @@
+{
+  "hospital": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+  "meps": "data/processed/meps_2008_2024/meps_diabetes_bridge8.csv",
+  "nhanes": "data/processed/nhanes/diabetes_hospitalization_2015_2018.csv",
+  "ccs_file": "/media/synology/G/314554044/diabetes_project/data/raw/ahrq/Single_Level_CCS_2015.zip",
+  "reference_oof": "results/meps_ccs_group_hgb_seed777/oof_all.csv",
+  "outdir": "results/real_external_sources_hgb_seed777",
+  "folds": 5,
+  "seed": 777,
+  "min_frequency": 100,
+  "domain_weight_min": 0.1,
+  "domain_weight_max": 10.0,
+  "bootstrap": 2000
+}

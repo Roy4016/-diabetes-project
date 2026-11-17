@@ -1,0 +1,8 @@
+{
+  "hospital": "diabetic_data.csv",
+  "cdc": "diabetes_012_health_indicators_BRFSS2015.csv",
+  "folds": 5,
+  "seed": 777,
+  "shap_samples": 2000,
+  "outdir": "cdc_clinical_interpretability_results"
+}

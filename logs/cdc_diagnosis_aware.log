@@ -1,0 +1,99 @@
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[CDC] Valid rows: 35,346
+[CDC] BP/Chol combinations: {0: 4269, 1: 4473, 2: 7391, 3: 19213}
+
+========== TRAIN CDC MODELS ==========
+[CDC] Trained reliable/poor_health
+[CDC] Trained full/poor_health
+[CDC] Trained reliable/phys_days
+[CDC] Trained full/phys_days
+[CDC] Trained reliable/diff_walk
+[CDC] Trained full/diff_walk
+
+========== TRANSFER CDC FEATURES ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [22:53:09] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[CDC] Diagnosis-aware inference 12,000/99,343
+[CDC] Diagnosis-aware inference 24,000/99,343
+[CDC] Diagnosis-aware inference 36,000/99,343
+[CDC] Diagnosis-aware inference 48,000/99,343
+[CDC] Diagnosis-aware inference 60,000/99,343
+[CDC] Diagnosis-aware inference 72,000/99,343
+[CDC] Diagnosis-aware inference 84,000/99,343
+[CDC] Diagnosis-aware inference 96,000/99,343
+[CDC] Diagnosis-aware inference 99,343/99,343
+
+========== FOLD 1/5 ==========
+[Done] Fold=1 E1_Baseline          AP=0.23781 AUROC=0.68214 F1=0.29376
+[Done] Fold=1 E2_Reliable4         AP=0.23599 AUROC=0.68201 F1=0.29387
+[Done] Fold=1 E3_ReliableHealth    AP=0.23547 AUROC=0.68016 F1=0.29036
+[Done] Fold=1 E4_Bridge6           AP=0.23642 AUROC=0.68222 F1=0.29286
+[Done] Fold=1 E5_NaiveHealth       AP=0.23711 AUROC=0.68053 F1=0.29492
+[Done] Fold=1 E6_DiagnosisAware    AP=0.23695 AUROC=0.68071 F1=0.29253
+[Done] Fold=1 E7_AwarePlus         AP=0.23605 AUROC=0.68119 F1=0.29379
+
+========== FOLD 2/5 ==========
+[Done] Fold=2 E1_Baseline          AP=0.23384 AUROC=0.66758 F1=0.28850
+[Done] Fold=2 E2_Reliable4         AP=0.23342 AUROC=0.66657 F1=0.28583
+[Done] Fold=2 E3_ReliableHealth    AP=0.23391 AUROC=0.66685 F1=0.28358
+[Done] Fold=2 E4_Bridge6           AP=0.23395 AUROC=0.66775 F1=0.28624
+[Done] Fold=2 E5_NaiveHealth       AP=0.23434 AUROC=0.66712 F1=0.28127
+[Done] Fold=2 E6_DiagnosisAware    AP=0.23448 AUROC=0.66738 F1=0.28593
+[Done] Fold=2 E7_AwarePlus         AP=0.23371 AUROC=0.66691 F1=0.28085
+
+========== FOLD 3/5 ==========
+[Done] Fold=3 E1_Baseline          AP=0.23317 AUROC=0.67774 F1=0.28999
+[Done] Fold=3 E2_Reliable4         AP=0.23308 AUROC=0.67779 F1=0.28892
+[Done] Fold=3 E3_ReliableHealth    AP=0.23280 AUROC=0.67851 F1=0.28772
+[Done] Fold=3 E4_Bridge6           AP=0.23341 AUROC=0.67878 F1=0.29132
+[Done] Fold=3 E5_NaiveHealth       AP=0.23381 AUROC=0.67913 F1=0.28969
+[Done] Fold=3 E6_DiagnosisAware    AP=0.23269 AUROC=0.67796 F1=0.29062
+[Done] Fold=3 E7_AwarePlus         AP=0.23201 AUROC=0.67933 F1=0.28929
+
+========== FOLD 4/5 ==========
+[Done] Fold=4 E1_Baseline          AP=0.23572 AUROC=0.67657 F1=0.29183
+[Done] Fold=4 E2_Reliable4         AP=0.23500 AUROC=0.67778 F1=0.28818
+[Done] Fold=4 E3_ReliableHealth    AP=0.23465 AUROC=0.67814 F1=0.28888
+[Done] Fold=4 E4_Bridge6           AP=0.23671 AUROC=0.67822 F1=0.29276
+[Done] Fold=4 E5_NaiveHealth       AP=0.23557 AUROC=0.67753 F1=0.28657
+[Done] Fold=4 E6_DiagnosisAware    AP=0.23621 AUROC=0.67837 F1=0.29374
+[Done] Fold=4 E7_AwarePlus         AP=0.23630 AUROC=0.67829 F1=0.29174
+
+========== FOLD 5/5 ==========
+[Done] Fold=5 E1_Baseline          AP=0.23359 AUROC=0.68023 F1=0.28517
+[Done] Fold=5 E2_Reliable4         AP=0.23452 AUROC=0.68191 F1=0.29402
+[Done] Fold=5 E3_ReliableHealth    AP=0.23488 AUROC=0.68186 F1=0.29157
+[Done] Fold=5 E4_Bridge6           AP=0.23390 AUROC=0.68058 F1=0.29322
+[Done] Fold=5 E5_NaiveHealth       AP=0.23539 AUROC=0.68056 F1=0.29167
+[Done] Fold=5 E6_DiagnosisAware    AP=0.23512 AUROC=0.68096 F1=0.29125
+[Done] Fold=5 E7_AwarePlus         AP=0.23394 AUROC=0.67977 F1=0.29158
+
+========== FINAL 5-FOLD SUMMARY ==========
+       Experiment  AP_mean  AP_std  AUROC_mean  F1_mean  Brier_mean
+      E1_Baseline  0.23483 0.00193     0.67685  0.28985     0.09569
+     E2_Reliable4  0.23440 0.00118     0.67721  0.29016     0.09569
+E3_ReliableHealth  0.23434 0.00103     0.67711  0.28842     0.09569
+       E4_Bridge6  0.23488 0.00156     0.67751  0.29128     0.09568
+   E5_NaiveHealth  0.23525 0.00127     0.67698  0.28882     0.09566
+E6_DiagnosisAware  0.23509 0.00165     0.67708  0.29081     0.09567
+     E7_AwarePlus  0.23440 0.00178     0.67710  0.28945     0.09569
+
+========== PAIRED CDC COMPARISONS ==========
+                        Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds
+  E3_ReliableHealth - E2_Reliable4     -0.00006     0.00045              2
+       E5_NaiveHealth - E4_Bridge6      0.00037     0.00096              4
+    E6_DiagnosisAware - E4_Bridge6      0.00021     0.00081              3
+E6_DiagnosisAware - E5_NaiveHealth     -0.00016     0.00064              2
+  E7_AwarePlus - E6_DiagnosisAware     -0.00069     0.00048              1
+        E7_AwarePlus - E1_Baseline     -0.00042     0.00100              2
+
+Finished: /media/synology/G/314554044/cdc_diagnosis_aware_results

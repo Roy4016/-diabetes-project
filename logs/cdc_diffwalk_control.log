@@ -1,0 +1,80 @@
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Hospital] 99,343 encounters, 69,990 patients; clinical features: 24
+[CDC] Eligible diabetic respondents: 35,346
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [03:28:54] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[CDC] trained cdc_poor_health
+[CDC] trained cdc_phys_days
+[CDC] trained cdc_diff_walk
+[CDC] trained permuted-label negative control
+
+========== FOLD 1/5 ==========
+[Done] Fold=1 Clinical             AP=0.23813 AUROC=0.68355 F1=0.29374
+[Done] Fold=1 CDC_DiffWalk         AP=0.23922 AUROC=0.68421 F1=0.29272
+[Done] Fold=1 Permuted_DiffWalk    AP=0.23869 AUROC=0.68452 F1=0.29560
+[Done] Fold=1 CDC_AllHealth        AP=0.23779 AUROC=0.68327 F1=0.29494
+
+========== FOLD 2/5 ==========
+[Done] Fold=2 Clinical             AP=0.23263 AUROC=0.66708 F1=0.28160
+[Done] Fold=2 CDC_DiffWalk         AP=0.23206 AUROC=0.66568 F1=0.27536
+[Done] Fold=2 Permuted_DiffWalk    AP=0.23193 AUROC=0.66644 F1=0.28148
+[Done] Fold=2 CDC_AllHealth        AP=0.23398 AUROC=0.66728 F1=0.28169
+
+========== FOLD 3/5 ==========
+[Done] Fold=3 Clinical             AP=0.23263 AUROC=0.67882 F1=0.29123
+[Done] Fold=3 CDC_DiffWalk         AP=0.23276 AUROC=0.67829 F1=0.28922
+[Done] Fold=3 Permuted_DiffWalk    AP=0.23282 AUROC=0.67889 F1=0.29018
+[Done] Fold=3 CDC_AllHealth        AP=0.23325 AUROC=0.67982 F1=0.29007
+
+========== FOLD 4/5 ==========
+[Done] Fold=4 Clinical             AP=0.23726 AUROC=0.67900 F1=0.29513
+[Done] Fold=4 CDC_DiffWalk         AP=0.23644 AUROC=0.67948 F1=0.29458
+[Done] Fold=4 Permuted_DiffWalk    AP=0.23654 AUROC=0.67961 F1=0.29299
+[Done] Fold=4 CDC_AllHealth        AP=0.23671 AUROC=0.67959 F1=0.29383
+
+========== FOLD 5/5 ==========
+[Done] Fold=5 Clinical             AP=0.23394 AUROC=0.68295 F1=0.29121
+[Done] Fold=5 CDC_DiffWalk         AP=0.23493 AUROC=0.68254 F1=0.29474
+[Done] Fold=5 Permuted_DiffWalk    AP=0.23516 AUROC=0.68324 F1=0.29248
+[Done] Fold=5 CDC_AllHealth        AP=0.23456 AUROC=0.68206 F1=0.29178
+
+========== FINAL 5-FOLD SUMMARY ==========
+       Experiment  AP_mean   AP_std  AUROC_mean  AUROC_std  F1_mean   F1_std  Brier_mean  Brier_std
+         Clinical 0.234919 0.002609    0.678280   0.006630 0.290581 0.005296    0.095664   0.000193
+     CDC_DiffWalk 0.235084 0.002896    0.678039   0.007303 0.289325 0.008116    0.095663   0.000232
+Permuted_DiffWalk 0.235028 0.002746    0.678541   0.007167 0.290548 0.005422    0.095662   0.000227
+    CDC_AllHealth 0.235256 0.001917    0.678403   0.006408 0.290461 0.005247    0.095640   0.000165
+
+========== PAIRED FOLD DELTAS ==========
+                      Comparison  MeanFoldDeltaAP  StdFoldDeltaAP  PositiveFolds
+         CDC_DiffWalk - Clinical         0.000165        0.000874              3
+    Permuted_DiffWalk - Clinical         0.000109        0.000836              3
+CDC_DiffWalk - Permuted_DiffWalk         0.000056        0.000295              2
+        CDC_AllHealth - Clinical         0.000337        0.000778              3
+    CDC_AllHealth - CDC_DiffWalk         0.000172        0.001227              3
+
+========== CDC SHAP SUMMARY ==========
+   Experiment         Feature  MeanAbsSHAP  StdAcrossFolds
+CDC_AllHealth   cdc_diff_walk     0.014092        0.004075
+CDC_AllHealth   cdc_phys_days     0.007092        0.000975
+CDC_AllHealth cdc_poor_health     0.012684        0.004218
+ CDC_DiffWalk   cdc_diff_walk     0.016067        0.002580
+
+========== PATIENT-LEVEL PAIRED BOOTSTRAP ==========
+                      Comparison  PooledOOF_DeltaAP  BootstrapMean  CI95_Lower  CI95_Upper  FractionPositive  Bootstraps
+         CDC_DiffWalk - Clinical          -0.000057      -0.000052   -0.001079    0.000991            0.4750         400
+    Permuted_DiffWalk - Clinical           0.000056       0.000059   -0.000722    0.000780            0.5925         400
+CDC_DiffWalk - Permuted_DiffWalk          -0.000112      -0.000083   -0.000920    0.000873            0.4350         400
+        CDC_AllHealth - Clinical           0.000255       0.000277   -0.000816    0.001363            0.7075         400
+    CDC_AllHealth - CDC_DiffWalk           0.000312       0.000302   -0.000564    0.001218            0.7725         400
+
+========== FINISHED ==========
+Saved to /media/synology/G/314554044/cdc_diffwalk_control_results

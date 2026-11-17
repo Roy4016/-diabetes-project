@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diabetes-research"
+version = "0.1.0"
+description = "Reusable preprocessing and experiment utilities for the diabetes readmission project"
+requires-python = ">=3.10"
+dependencies = [
+  "joblib",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "scipy",
+]
+
+[project.optional-dependencies]
+xgboost = ["xgboost"]
+tabpfn = ["tabpfn>=10.1,<11"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

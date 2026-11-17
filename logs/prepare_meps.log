@@ -1,0 +1,60 @@
+
+========== 2008 ==========
+Reading h121ssp.zip -> h121.ssp
+[2008] Total respondents: 33,066
+[2008] Diabetes rows: 2,381
+[2008] Unique PANEL+DUPERSID: 2,381
+[2008] Saved: /media/synology/G/314554044/datasets/MEPS_2008_2012/meps_2008_diabetes.csv
+
+========== 2009 ==========
+Reading h129ssp.zip -> h129.ssp
+[2009] Total respondents: 36,855
+[2009] Diabetes rows: 2,445
+[2009] Unique PANEL+DUPERSID: 2,445
+[2009] Saved: /media/synology/G/314554044/datasets/MEPS_2008_2012/meps_2009_diabetes.csv
+
+========== 2010 ==========
+Reading h138ssp.zip -> h138.ssp
+[2010] Total respondents: 32,846
+[2010] Diabetes rows: 2,282
+[2010] Unique PANEL+DUPERSID: 2,282
+[2010] Saved: /media/synology/G/314554044/datasets/MEPS_2008_2012/meps_2010_diabetes.csv
+
+========== 2011 ==========
+Reading h147ssp.zip -> h147.ssp
+[2011] Total respondents: 35,313
+[2011] Diabetes rows: 2,590
+[2011] Unique PANEL+DUPERSID: 2,590
+[2011] Saved: /media/synology/G/314554044/datasets/MEPS_2008_2012/meps_2011_diabetes.csv
+
+========== 2012 ==========
+Reading h155ssp.zip -> h155.ssp
+[2012] Total respondents: 38,974
+[2012] Diabetes rows: 2,751
+[2012] Unique PANEL+DUPERSID: 2,751
+[2012] Saved: /media/synology/G/314554044/datasets/MEPS_2008_2012/meps_2012_diabetes.csv
+
+========== YEARLY COUNTS ==========
+ YEAR  TotalRespondents  DiabetesRows  UniquePersonsWithinYear
+ 2008             33066          2381                     2381
+ 2009             36855          2445                     2445
+ 2010             32846          2282                     2282
+ 2011             35313          2590                     2590
+ 2012             38974          2751                     2751
+
+========== FINAL DIABETES SAMPLE ==========
+Diabetes person-year records: 12,449
+Unique diabetic respondents: 7,991
+Repeated person-year rows: 4,458
+At least 5000 records: True
+At least 5000 unique persons: True
+
+========== COMMON COLUMNS ==========
+Common columns: 43
+Potentially useful common columns: ['ADCLIM42', 'ADGENH42', 'ADL3MO31', 'ADL3MO42', 'ADL3MO53', 'ADLANG42', 'ADLHLP31', 'ADLHLP42', 'ADLHLP53', 'ADLIST42', 'AGE31X', 'AGE42X', 'AGE53X', 'AGELAST', 'CHDAGED', 'CHDDX', 'CHOLAGED', 'CHOLCK53', 'CHOLDX', 'DIABAGED', 'DIABDX', 'HIBPAGED', 'HIBPDX', 'MCS42', 'MIDX', 'MNHLTH31', 'MNHLTH42', 'MNHLTH53', 'PCS42', 'RTHLTH31', 'RTHLTH42', 'RTHLTH53', 'SEX', 'STRKAGED', 'STRKDX']
+
+========== OUTPUT FILES ==========
+/media/synology/G/314554044/datasets/MEPS_2008_2012/meps_diabetes_yearly_counts.csv
+/media/synology/G/314554044/datasets/MEPS_2008_2012/meps_diabetes_2008_2012.csv
+/media/synology/G/314554044/datasets/MEPS_2008_2012/meps_diabetes_unique_people.csv
+/media/synology/G/314554044/datasets/MEPS_2008_2012/meps_common_columns.csv

@@ -1,0 +1,36 @@
+/home/synology/anaconda3/envs/diabetes/lib/python3.10/site-packages/sklearn/base.py:442: InconsistentVersionWarning: Trying to unpickle estimator SimpleImputer from version 1.8.0 when using version 1.7.2. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+/home/synology/anaconda3/envs/diabetes/lib/python3.10/site-packages/sklearn/base.py:442: InconsistentVersionWarning: Trying to unpickle estimator StandardScaler from version 1.8.0 when using version 1.7.2. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+/home/synology/anaconda3/envs/diabetes/lib/python3.10/site-packages/sklearn/base.py:442: InconsistentVersionWarning: Trying to unpickle estimator Pipeline from version 1.8.0 when using version 1.7.2. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+/home/synology/anaconda3/envs/diabetes/lib/python3.10/site-packages/sklearn/base.py:442: InconsistentVersionWarning: Trying to unpickle estimator OneHotEncoder from version 1.8.0 when using version 1.7.2. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+/home/synology/anaconda3/envs/diabetes/lib/python3.10/site-packages/sklearn/base.py:442: InconsistentVersionWarning: Trying to unpickle estimator ColumnTransformer from version 1.8.0 when using version 1.7.2. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+/home/synology/anaconda3/envs/diabetes/lib/python3.10/site-packages/xgboost/core.py:751: UserWarning: [21:36:44] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+xgb_standard: best iteration=135; validation threshold=0.1317; test AUROC=0.6559; test AP=0.2291
+xgb_balanced: best iteration=5; validation threshold=0.5072; test AUROC=0.6417; test AP=0.2182
+
+        model      split threshold_policy  AUROC  PR_AUC_AP  Precision  Recall     F1  Brier
+xgb_standard validation      default_0.5 0.6503     0.1897     0.0000  0.0000 0.0000 0.0936
+xgb_standard validation   val_f1_optimal 0.6503     0.1897     0.1889  0.4166 0.2599 0.0936
+xgb_standard       test      default_0.5 0.6559     0.2291     0.6957  0.0089 0.0176 0.1014
+xgb_standard       test   val_f1_optimal 0.6559     0.2291     0.2068  0.4199 0.2771 0.1014
+xgb_balanced validation      default_0.5 0.6309     0.1807     0.1577  0.5047 0.2403 0.2428
+xgb_balanced validation   val_f1_optimal 0.6309     0.1807     0.1650  0.4635 0.2434 0.2428
+xgb_balanced       test      default_0.5 0.6417     0.2182     0.1797  0.5289 0.2682 0.2429
+xgb_balanced       test   val_f1_optimal 0.6417     0.2182     0.1898  0.4883 0.2733 0.2429
+Saved to /media/synology/G/314554044/xgboost_results

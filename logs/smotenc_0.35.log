@@ -1,0 +1,21 @@
+[Data] train=69,613, val=14,779, test=14,948
+[Before SMOTENC] negative=61,698, positive=7,915, pos/neg=0.1283
+[SMOTENC] sampling_strategy=0.35, k_neighbors=5
+[After SMOTENC] negative=61,698, positive=21,594, pos/neg=0.3500
+[Encoded features] 2,339; device=cuda
+[Training XGBoost...]
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [13:37:22] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] best_iteration=107; threshold=0.1898
+           model      split threshold_policy  AUROC  PR_AUC_AP  Precision  Recall     F1  Brier
+xgb_smotenc_0p35 validation      default_0.5 0.6264     0.1809     0.0000  0.0000 0.0000 0.0972
+xgb_smotenc_0p35 validation   val_f1_optimal 0.6264     0.1809     0.1818  0.3823 0.2464 0.0972
+xgb_smotenc_0p35       test      default_0.5 0.6394     0.2133     0.0000  0.0000 0.0000 0.1041
+xgb_smotenc_0p35       test   val_f1_optimal 0.6394     0.2133     0.1999  0.3910 0.2645 0.1041
+Saved to /media/synology/G/314554044/xgboost_smote_0.35

@@ -1,0 +1,18 @@
+{
+  "hospital": "diabetic_data.csv",
+  "cdc": "diabetes_012_health_indicators_BRFSS2015.csv",
+  "seed": 777,
+  "folds": 2,
+  "epochs": 30,
+  "smote_ratio": 0.3,
+  "outdir": "cdc_encoder_control_smoke",
+  "methods": [
+    "None",
+    "ClassWeight2"
+  ],
+  "features": [
+    "Bridge",
+    "RandomEncoder",
+    "CDCPretrained"
+  ]
+}

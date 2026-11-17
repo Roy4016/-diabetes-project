@@ -1,0 +1,2 @@
+Comparison,PooledOOF_DeltaAP,CI95_Lower,CI95_Upper,FractionPositive,Bootstraps
+aligned_mtl - aligned_shuffled_mtl,0.001570587763829262,-2.0086809938378566e-05,0.0031041377389955005,0.972,1000

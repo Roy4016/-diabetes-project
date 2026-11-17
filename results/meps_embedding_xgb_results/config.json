@@ -1,0 +1,43 @@
+{
+  "config": {
+    "folds_dir": "/media/synology/G/314554044/diabetes_project/data/processed/uci_5fold",
+    "uci_csv": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+    "meps_csv": "/media/synology/G/314554044/diabetes_project/data/processed/meps/meps_diabetes_bridge8.csv",
+    "output_dir": "/media/synology/G/314554044/diabetes_project/results/meps_embedding_xgb_results",
+    "variants": [
+      "clinical",
+      "random",
+      "pretrained",
+      "multitask",
+      "shuffled"
+    ],
+    "max_folds": 5,
+    "seed": 777,
+    "embedding_dim": 16,
+    "pretrain_epochs": 30,
+    "multitask_epochs": 20,
+    "patience": 5,
+    "batch_size": 1024,
+    "meps_batch_size": 512,
+    "learning_rate": 0.001,
+    "lambda_meps": 0.2,
+    "xgb_estimators": 300,
+    "xgb_early_stopping": 25,
+    "bootstrap": 200,
+    "device": "cpu"
+  },
+  "external_validation": {
+    "best_epoch": 23,
+    "validation_loss": 0.7219541668891907,
+    "validation_people": 1599,
+    "ER_AP": 0.3245805392867125,
+    "ER_AUROC": 0.6252197798121578,
+    "IP_AP": 0.2842046876029187,
+    "IP_AUROC": 0.6706287574263385
+  },
+  "uci_rows": 99340,
+  "uci_patients": 69987,
+  "meps_rows": 12449,
+  "meps_people": 7991,
+  "shared_feature_count": 12
+}

@@ -1,0 +1,15 @@
+{
+  "hospital": "diabetic_data.csv",
+  "meps": "datasets/MEPS_2008_2012/meps_diabetes_bridge8.csv",
+  "outdir": "meps_multitask_results",
+  "folds": 5,
+  "seed": 777,
+  "epochs": 30,
+  "pretrain_epochs": 30,
+  "patience": 6,
+  "batch": 1024,
+  "meps_batch": 512,
+  "lambda_meps": 0.2,
+  "lr": 0.001,
+  "bootstrap": 200
+}

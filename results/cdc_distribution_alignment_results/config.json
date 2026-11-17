@@ -1,0 +1,10 @@
+{
+  "hospital": "diabetic_data.csv",
+  "cdc": "diabetes_012_health_indicators_BRFSS2015.csv",
+  "folds": 5,
+  "seed": 777,
+  "weight_min": 0.2,
+  "weight_max": 5.0,
+  "cdc_all": false,
+  "outdir": "cdc_distribution_alignment_results"
+}

@@ -1,0 +1,5 @@
+Comparison,MeanFold_Delta_PR_AUC,CI95_Lower,CI95_Upper,FractionPositive,BootstrapReplicates,ResamplingUnit
+ccs_meps_extended_hgb - ccs_only_hgb,-0.0005543823143154825,-0.0023119391712690474,0.0010924887813395393,0.24,2000,patient within fold
+ccs_nhanes_hgb - ccs_only_hgb,-0.001765012264917526,-0.003544919226276706,-6.654657031375851e-05,0.019,2000,patient within fold
+ccs_meps_nhanes_hgb - ccs_only_hgb,-0.0010681769847187329,-0.0027295911210738614,0.0006006485968345174,0.1045,2000,patient within fold
+ccs_meps_nhanes_hgb - ccs_meps_extended_hgb,-0.0005137946704032503,-0.0017745414671208701,0.0008393820454964512,0.238,2000,patient within fold

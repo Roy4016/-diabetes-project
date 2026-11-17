@@ -1,0 +1,51 @@
+{
+  "original_encounters": 101766,
+  "excluded_death_hospice": 2423,
+  "excluded_invalid_gender": 3,
+  "remaining_encounters": 99340,
+  "unique_patients": 69987,
+  "target_definition": "1 if readmitted == <30, else 0",
+  "official_id_mapping_file": "/mnt/data/IDS_mapping.csv",
+  "mapped_feature_names": [
+    "admission_type",
+    "admission_source"
+  ],
+  "unmapped_ids_count": {
+    "admission_type_id": 0,
+    "admission_source_id": 0
+  },
+  "feature_count_raw": 43,
+  "encoded_feature_count": 2339,
+  "discharge_disposition_as_predictor": false,
+  "split": {
+    "train": {
+      "encounters": 69613,
+      "unique_patients": 48990,
+      "positive_cases": 7915,
+      "positive_rate": 0.1137
+    },
+    "val": {
+      "encounters": 14779,
+      "unique_patients": 10498,
+      "positive_cases": 1601,
+      "positive_rate": 0.10833
+    },
+    "test": {
+      "encounters": 14948,
+      "unique_patients": 10499,
+      "positive_cases": 1798,
+      "positive_rate": 0.12028
+    }
+  },
+  "notes": [
+    "Hospital encounter is the unit of analysis; repeated encounters from the same patient stay in one split.",
+    "GroupShuffleSplit gives approximate encounter proportions, not class stratification.",
+    "Original admission IDs were replaced by official description labels; missing, Not Mapped, NULL and Not Available become Unknown.",
+    "Official IDS_mapping.csv is from the same UCI dataset and does not count as external augmentation.",
+    "No external augmentation, resampling or calibration has been applied yet.",
+    "Predictors correspond to discharge-time risk prediction; review use of all medication and procedure variables if changing target time.",
+    "Missing A1Cresult/max_glu_serum are retained as separate Unknown categorical values.",
+    "When adding CDC/CCS columns, rebuild and refit this preprocessor using TRAIN only."
+  ]
+}
+Saved output to: /mnt/data/uci_prepared_with_ids

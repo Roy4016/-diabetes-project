@@ -1,0 +1,25 @@
+[Data] train=69,613, val=14,779, test=14,948
+[Original encoded features] 2339
+[CDC] train: age-sex group matches=99.1%
+[CDC] validation: age-sex group matches=99.1%
+[CDC] test: age-sex group matches=99.3%
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [15:13:04] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] xgb_uci_only: best_iteration=135; val_threshold=0.1317; test_AUROC=0.6559; test_AP=0.2291
+[Done] xgb_uci_cdc: best_iteration=71; val_threshold=0.1292; test_AUROC=0.6533; test_AP=0.2278
+       model      split threshold_policy  AUROC  PR_AUC_AP  Precision  Recall     F1  Brier
+xgb_uci_only validation      default_0.5 0.6503     0.1897     0.0000  0.0000 0.0000 0.0936
+xgb_uci_only validation   val_f1_optimal 0.6503     0.1897     0.1889  0.4166 0.2599 0.0936
+xgb_uci_only       test      default_0.5 0.6559     0.2291     0.6957  0.0089 0.0176 0.1014
+xgb_uci_only       test   val_f1_optimal 0.6559     0.2291     0.2068  0.4199 0.2771 0.1014
+ xgb_uci_cdc validation      default_0.5 0.6452     0.1879     0.0000  0.0000 0.0000 0.0937
+ xgb_uci_cdc validation   val_f1_optimal 0.6452     0.1879     0.1848  0.4191 0.2565 0.0937
+ xgb_uci_cdc       test      default_0.5 0.6533     0.2278     0.6923  0.0050 0.0099 0.1016
+ xgb_uci_cdc       test   val_f1_optimal 0.6533     0.2278     0.2041  0.4249 0.2757 0.1016
+Saved to /media/synology/G/314554044/xgboost_cdc_results

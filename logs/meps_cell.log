@@ -1,0 +1,105 @@
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Clinical] Features=24
+[Hospital] Rows=99,343; Patients=69,990; Readmission=0.1139
+[MEPS] Rows=12,449; Persons=7,991
+[MEPS] ER rate=0.2184; IP rate=0.1657
+
+========== CELL STATISTICS ==========
+[Cell] meps_er_rate                 mean=0.2406 std=0.0364 level_counts={0: 2749, 1: 693, 2: 3277, 3: 92624} support_mean=273.8
+[Cell] meps_ip_rate                 mean=0.1980 std=0.0473 level_counts={0: 2749, 1: 693, 2: 3277, 3: 92624} support_mean=273.8
+[Cell] meps_physical_health         mean=38.8240 std=3.5285 level_counts={0: 3439, 1: 3, 2: 3301, 3: 92600} support_mean=250.8
+[Cell] meps_mental_health           mean=49.1444 std=1.7869 level_counts={0: 3439, 1: 3, 2: 3301, 3: 92600} support_mean=250.8
+[Cell] meps_general_health          mean=3.1737 std=0.0890 level_counts={0: 2749, 1: 693, 2: 3277, 3: 92624} support_mean=268.9
+[Cell] meps_activity_limitation     mean=0.4997 std=0.0878 level_counts={0: 3439, 1: 542, 2: 5542, 3: 89820} support_mean=173.5
+[Cell] meps_er_visits               mean=0.3635 std=0.0754 level_counts={0: 2749, 1: 693, 2: 3277, 3: 92624} support_mean=273.8
+[Cell] meps_inpatient_nights        mean=1.9780 std=0.8332 level_counts={0: 2749, 1: 693, 2: 3277, 3: 92624} support_mean=273.8
+[Cell] meps_log_total_expense       mean=8.3454 std=0.5106 level_counts={0: 2749, 1: 693, 2: 3277, 3: 92624} support_mean=273.8
+
+========== HOSPITAL FOLD 1/5 ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [05:01:11] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] Fold=1 Clinical                 AP=0.23813 AUROC=0.68355 F1=0.29374
+[Done] Fold=1 Direct_Demog             AP=0.23864 AUROC=0.68383 F1=0.29418
+[Done] Fold=1 Cell_ERIP                AP=0.23725 AUROC=0.68353 F1=0.29296
+[Done] Fold=1 Cell_Health              AP=0.23751 AUROC=0.68311 F1=0.29494
+[Done] Fold=1 Cell_Util                AP=0.23722 AUROC=0.68285 F1=0.29010
+[Done] Fold=1 Cell_All                 AP=0.23678 AUROC=0.68302 F1=0.29153
+[Done] Fold=1 Direct_Demog_Cell_All    AP=0.23766 AUROC=0.68425 F1=0.29628
+
+========== HOSPITAL FOLD 2/5 ==========
+[Done] Fold=2 Clinical                 AP=0.23263 AUROC=0.66708 F1=0.28160
+[Done] Fold=2 Direct_Demog             AP=0.23319 AUROC=0.66764 F1=0.27895
+[Done] Fold=2 Cell_ERIP                AP=0.23207 AUROC=0.66684 F1=0.28523
+[Done] Fold=2 Cell_Health              AP=0.23271 AUROC=0.66635 F1=0.28079
+[Done] Fold=2 Cell_Util                AP=0.23064 AUROC=0.66642 F1=0.28248
+[Done] Fold=2 Cell_All                 AP=0.23305 AUROC=0.66613 F1=0.28459
+[Done] Fold=2 Direct_Demog_Cell_All    AP=0.23158 AUROC=0.66636 F1=0.28144
+
+========== HOSPITAL FOLD 3/5 ==========
+[Done] Fold=3 Clinical                 AP=0.23263 AUROC=0.67882 F1=0.29123
+[Done] Fold=3 Direct_Demog             AP=0.23233 AUROC=0.67967 F1=0.29192
+[Done] Fold=3 Cell_ERIP                AP=0.23436 AUROC=0.67881 F1=0.28933
+[Done] Fold=3 Cell_Health              AP=0.23256 AUROC=0.67891 F1=0.28657
+[Done] Fold=3 Cell_Util                AP=0.23246 AUROC=0.67855 F1=0.28686
+[Done] Fold=3 Cell_All                 AP=0.23321 AUROC=0.67860 F1=0.28606
+[Done] Fold=3 Direct_Demog_Cell_All    AP=0.23187 AUROC=0.67772 F1=0.28782
+
+========== HOSPITAL FOLD 4/5 ==========
+[Done] Fold=4 Clinical                 AP=0.23726 AUROC=0.67900 F1=0.29513
+[Done] Fold=4 Direct_Demog             AP=0.23640 AUROC=0.67997 F1=0.29545
+[Done] Fold=4 Cell_ERIP                AP=0.23658 AUROC=0.67881 F1=0.29570
+[Done] Fold=4 Cell_Health              AP=0.23704 AUROC=0.67922 F1=0.29368
+[Done] Fold=4 Cell_Util                AP=0.23871 AUROC=0.67886 F1=0.29378
+[Done] Fold=4 Cell_All                 AP=0.23950 AUROC=0.67913 F1=0.29169
+[Done] Fold=4 Direct_Demog_Cell_All    AP=0.23723 AUROC=0.67892 F1=0.29452
+
+========== HOSPITAL FOLD 5/5 ==========
+[Done] Fold=5 Clinical                 AP=0.23394 AUROC=0.68295 F1=0.29121
+[Done] Fold=5 Direct_Demog             AP=0.23524 AUROC=0.68497 F1=0.29261
+[Done] Fold=5 Cell_ERIP                AP=0.23386 AUROC=0.68191 F1=0.28781
+[Done] Fold=5 Cell_Health              AP=0.23481 AUROC=0.68305 F1=0.29467
+[Done] Fold=5 Cell_Util                AP=0.23296 AUROC=0.68186 F1=0.29037
+[Done] Fold=5 Cell_All                 AP=0.23312 AUROC=0.68267 F1=0.28963
+[Done] Fold=5 Direct_Demog_Cell_All    AP=0.23291 AUROC=0.68292 F1=0.29184
+
+========== FINAL 5-FOLD SUMMARY ==========
+           Experiment  AP_mean   AP_std  AUROC_mean  AUROC_std  F1_mean   F1_std  Brier_mean  Brier_std
+             Clinical 0.234919 0.002609    0.678280   0.006630 0.290581 0.005296    0.095664   0.000193
+         Direct_Demog 0.235160 0.002529    0.679216   0.006877 0.290620 0.006669    0.095640   0.000191
+            Cell_ERIP 0.234824 0.002102    0.677980   0.006551 0.290205 0.004155    0.095669   0.000190
+          Cell_Health 0.234925 0.002326    0.678129   0.006885 0.290128 0.006251    0.095669   0.000197
+            Cell_Util 0.234399 0.003411    0.677707   0.006581 0.288719 0.004261    0.095694   0.000221
+             Cell_All 0.235131 0.002910    0.677912   0.006883 0.288700 0.003226    0.095679   0.000196
+Direct_Demog_Cell_All 0.234250 0.002961    0.678035   0.007065 0.290379 0.005925    0.095705   0.000215
+
+========== PAIRED COMPARISONS ==========
+                          Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds  PooledOOF_DeltaAP
+             Direct_Demog - Clinical     0.000241    0.000839              3           0.000054
+                Cell_ERIP - Clinical    -0.000095    0.001062              1           0.000038
+              Cell_Health - Clinical     0.000006    0.000549              2          -0.000004
+                Cell_Util - Clinical    -0.000520    0.001279              1          -0.000430
+                 Cell_All - Clinical     0.000212    0.001394              3          -0.000039
+    Direct_Demog_Cell_All - Clinical    -0.000668    0.000427              0          -0.000682
+Direct_Demog_Cell_All - Direct_Demog    -0.000910    0.001198              1          -0.000737
+
+========== PATIENT BOOTSTRAP ==========
+                          Comparison  PooledOOF_DeltaAP  CI95_Lower  CI95_Upper  FractionPositive
+             Direct_Demog - Clinical           0.000054   -0.000714    0.000848             0.585
+                Cell_ERIP - Clinical           0.000038   -0.000733    0.000867             0.555
+              Cell_Health - Clinical          -0.000004   -0.001019    0.001079             0.520
+                Cell_Util - Clinical          -0.000430   -0.001524    0.000452             0.210
+                 Cell_All - Clinical          -0.000039   -0.001157    0.001071             0.430
+    Direct_Demog_Cell_All - Clinical          -0.000682   -0.001927    0.000557             0.105
+Direct_Demog_Cell_All - Direct_Demog          -0.000737   -0.001772    0.000304             0.075
+
+========== FINISHED ==========
+Saved: /media/synology/G/314554044/meps_cell_results

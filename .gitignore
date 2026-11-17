@@ -1,0 +1,35 @@
+# Patient-level datasets, downloaded source files, and generated splits
+/data/
+
+# Keep compact experiment metrics while excluding predictions and model artifacts
+/results/*
+!/results/*/
+/results/*/*
+!/results/*/summary.csv
+!/results/*/summary_mean_std.csv
+!/results/*/fold_results.csv
+!/results/*/fold_mean_summary.csv
+!/results/*/config.json
+!/results/*/patient_bootstrap.csv
+!/results/*/fold_stratified_patient_bootstrap.csv
+!/results/*/external_signal_bootstrap.csv
+!/results/*/rf_metrics.csv
+!/results/*/xgb_metrics.csv
+!/results/*/metrics.csv
+!/results/*/domain_results.csv
+!/results/*/experiment_results.csv
+
+# Local Python environments and generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.conda/
+.env
+.env.*
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store

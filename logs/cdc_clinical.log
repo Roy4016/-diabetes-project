@@ -1,0 +1,80 @@
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Clinical] Created 24 features
+[CDC] Diabetic respondents: 35,346
+
+========== CDC TRAINING ==========
+[CDC] Trained cdc_poor_health
+[CDC] Trained cdc_phys_days
+[CDC] Trained cdc_diff_walk
+
+========== CDC FEATURE TRANSFER ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [00:09:31] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[CDC] Score range: 0.10863006114959717 0.7373437881469727
+
+========== FOLD 1/5 ==========
+[Stratification] Fold=1 cuts=(0.2458, 0.2853)
+[Done] Fold=1 E1_Baseline              AP=0.23781 AUROC=0.68214 F1=0.29376
+[Done] Fold=1 E2_Clinical              AP=0.23813 AUROC=0.68355 F1=0.29374
+[Done] Fold=1 E3_Clinical_CDCScore     AP=0.23889 AUROC=0.68443 F1=0.29507
+[Done] Fold=1 E4_Clinical_CDCHealth    AP=0.23779 AUROC=0.68327 F1=0.29494
+
+========== FOLD 2/5 ==========
+[Stratification] Fold=2 cuts=(0.2458, 0.2853)
+[Done] Fold=2 E1_Baseline              AP=0.23384 AUROC=0.66758 F1=0.28850
+[Done] Fold=2 E2_Clinical              AP=0.23263 AUROC=0.66708 F1=0.28160
+[Done] Fold=2 E3_Clinical_CDCScore     AP=0.23185 AUROC=0.66586 F1=0.27964
+[Done] Fold=2 E4_Clinical_CDCHealth    AP=0.23398 AUROC=0.66728 F1=0.28169
+
+========== FOLD 3/5 ==========
+[Stratification] Fold=3 cuts=(0.2458, 0.2853)
+[Done] Fold=3 E1_Baseline              AP=0.23317 AUROC=0.67774 F1=0.28999
+[Done] Fold=3 E2_Clinical              AP=0.23263 AUROC=0.67882 F1=0.29123
+[Done] Fold=3 E3_Clinical_CDCScore     AP=0.23226 AUROC=0.67790 F1=0.29059
+[Done] Fold=3 E4_Clinical_CDCHealth    AP=0.23325 AUROC=0.67982 F1=0.29007
+
+========== FOLD 4/5 ==========
+[Stratification] Fold=4 cuts=(0.2458, 0.2853)
+[Done] Fold=4 E1_Baseline              AP=0.23572 AUROC=0.67657 F1=0.29183
+[Done] Fold=4 E2_Clinical              AP=0.23726 AUROC=0.67900 F1=0.29513
+[Done] Fold=4 E3_Clinical_CDCScore     AP=0.23545 AUROC=0.67892 F1=0.29140
+[Done] Fold=4 E4_Clinical_CDCHealth    AP=0.23671 AUROC=0.67959 F1=0.29383
+
+========== FOLD 5/5 ==========
+[Stratification] Fold=5 cuts=(0.2458, 0.2853)
+[Done] Fold=5 E1_Baseline              AP=0.23359 AUROC=0.68023 F1=0.28517
+[Done] Fold=5 E2_Clinical              AP=0.23394 AUROC=0.68295 F1=0.29121
+[Done] Fold=5 E3_Clinical_CDCScore     AP=0.23474 AUROC=0.68301 F1=0.28951
+[Done] Fold=5 E4_Clinical_CDCHealth    AP=0.23456 AUROC=0.68206 F1=0.29178
+
+========== FINAL 5-FOLD SUMMARY ==========
+           Experiment  AP_mean  AP_std  AUROC_mean  F1_mean  Brier_mean
+          E1_Baseline  0.23483 0.00193     0.67685  0.28985     0.09569
+          E2_Clinical  0.23492 0.00261     0.67828  0.29058     0.09566
+ E3_Clinical_CDCScore  0.23464 0.00284     0.67802  0.28924     0.09567
+E4_Clinical_CDCHealth  0.23526 0.00192     0.67840  0.29046     0.09564
+
+========== PAIRED AP COMPARISONS ==========
+                         Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds
+          E2_Clinical - E1_Baseline      0.00009     0.00104              3
+ E3_Clinical_CDCScore - E2_Clinical     -0.00028     0.00110              2
+E4_Clinical_CDCHealth - E2_Clinical      0.00034     0.00078              3
+E4_Clinical_CDCHealth - E1_Baseline      0.00043     0.00050              4
+
+========== CDC RISK STRATIFICATION ==========
+RiskGroup     N  Positive  ReadmissionRate  MeanCDCScore
+      Low 32523      3798          0.11678       0.18440
+   Medium 30589      3565          0.11655       0.25458
+     High 36231      3951          0.10905       0.37451
+
+========== FINISHED ==========
+Results saved: /media/synology/G/314554044/cdc_clinical_results

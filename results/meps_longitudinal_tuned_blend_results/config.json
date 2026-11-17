@@ -1,0 +1,58 @@
+{
+  "config": {
+    "folds_dir": "/media/synology/G/314554044/diabetes_project/data/processed/uci_5fold",
+    "uci_csv": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+    "meps_csv": "/media/synology/G/314554044/diabetes_project/data/processed/meps/meps_diabetes_bridge8.csv",
+    "output_dir": "results/meps_longitudinal_tuned_blend_results",
+    "max_folds": 5,
+    "seed": 777,
+    "svd_components": 64,
+    "embedding_dim": 16,
+    "pretrain_epochs": 30,
+    "uci_epochs": 12,
+    "patience": 3,
+    "batch_size": 4096,
+    "meps_batch_size": 512,
+    "learning_rate": 0.001,
+    "lambda_meps": 0.2,
+    "lambda_values": [
+      0.05,
+      0.1,
+      0.2
+    ],
+    "expense_weight": 0.2,
+    "xgb_estimators": 300,
+    "xgb_early_stopping": 25,
+    "max_external_weight": 0.6,
+    "blend_steps": 13,
+    "min_blend_gain": 0.0005,
+    "bootstrap": 1000,
+    "device": "cpu"
+  },
+  "true_external_validation": {
+    "pairs": 4458,
+    "train_pairs": 3566,
+    "validation_pairs": 892,
+    "best_epoch": 30,
+    "ER_AP": 0.3646304050550646,
+    "ER_AUROC": 0.6498062849763238,
+    "IP_AP": 0.37248948458054104,
+    "IP_AUROC": 0.6893570834084103,
+    "expense_log_MAE": 1.311967134475708,
+    "expense_mean": 8.15052604675293,
+    "expense_std": 2.0244076251983643
+  },
+  "shuffled_external_validation": {
+    "pairs": 4458,
+    "train_pairs": 3566,
+    "validation_pairs": 892,
+    "best_epoch": 9,
+    "ER_AP": 0.20591859431300596,
+    "ER_AUROC": 0.4542402066293586,
+    "IP_AP": 0.15143942819969516,
+    "IP_AUROC": 0.42636018087123645,
+    "expense_log_MAE": 1.444804072380066,
+    "expense_mean": 8.15052604675293,
+    "expense_std": 2.0244076251983643
+  }
+}

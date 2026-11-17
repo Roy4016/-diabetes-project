@@ -1,0 +1,2 @@
+Comparison,PooledOOF_DeltaAP,CI95_Lower,CI95_Upper,FractionPositive,Bootstraps
+multitask_tuned - clinical,-0.0012588927785391058,-0.0024379033080896687,0.00014338034869430282,0.045,200

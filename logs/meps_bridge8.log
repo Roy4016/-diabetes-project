@@ -1,0 +1,102 @@
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Hospital] Rows=99,343; Patients=69,990; Clinical=24
+[MEPS] Rows=12,449; Persons=7,991; ER=0.2184; IP=0.1657
+
+========== BRIDGE DIAGNOSTICS ==========
+bridge_age                MEPS=59.3708 Hospital=65.7443
+bridge_sex                MEPS=0.4520 Hospital=0.4619
+bridge_high_bp            MEPS=0.7652 Hospital=0.1968
+bridge_high_chol          MEPS=0.7023 Hospital=0.0240
+bridge_stroke             MEPS=0.1177 Hospital=0.0537
+bridge_heart_disease      MEPS=0.1867 Hospital=0.1632
+bridge_mi                 MEPS=0.1268 Hospital=0.0458
+bridge_race_Caucasian     MEPS=0.4049 Hospital=0.7643
+bridge_race_AfricanAmerican MEPS=0.2571 Hospital=0.1933
+bridge_race_Hispanic      MEPS=0.2489 Hospital=0.0208
+bridge_race_Asian         MEPS=0.0607 Hospital=0.0065
+bridge_race_Other         MEPS=0.0284 Hospital=0.0152
+
+========== EXTERNAL MEPS VALIDATION ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [04:41:53] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[MEPS] ER-2 AP=0.24022 AUROC=0.53335 rows=2471
+[MEPS] IP-2 AP=0.20786 AUROC=0.57202 rows=2471
+[MEPS] ER-6 AP=0.31386 AUROC=0.61917 rows=2466
+[MEPS] IP-6 AP=0.25923 AUROC=0.64622 rows=2466
+[MEPS] ER-8 AP=0.32329 AUROC=0.63078 rows=2466
+[MEPS] IP-8 AP=0.28966 AUROC=0.66912 rows=2466
+
+========== HOSPITAL FOLD 1/5 ==========
+[Done] Fold=1 Clinical                 AP=0.23813 AUROC=0.68355 F1=0.29374
+[Done] Fold=1 Direct_Bridge8           AP=0.23890 AUROC=0.68435 F1=0.29447
+[Done] Fold=1 MEPS_ER_8                AP=0.23761 AUROC=0.68380 F1=0.29458
+[Done] Fold=1 MEPS_IP_8                AP=0.23925 AUROC=0.68435 F1=0.29538
+[Done] Fold=1 MEPS_Both_8              AP=0.23747 AUROC=0.68320 F1=0.29453
+[Done] Fold=1 Direct8_MEPS_Both8       AP=0.23858 AUROC=0.68454 F1=0.29469
+
+========== HOSPITAL FOLD 2/5 ==========
+[Done] Fold=2 Clinical                 AP=0.23263 AUROC=0.66708 F1=0.28160
+[Done] Fold=2 Direct_Bridge8           AP=0.23292 AUROC=0.66724 F1=0.28234
+[Done] Fold=2 MEPS_ER_8                AP=0.23177 AUROC=0.66608 F1=0.28043
+[Done] Fold=2 MEPS_IP_8                AP=0.23171 AUROC=0.66686 F1=0.28065
+[Done] Fold=2 MEPS_Both_8              AP=0.23158 AUROC=0.66696 F1=0.27758
+[Done] Fold=2 Direct8_MEPS_Both8       AP=0.23185 AUROC=0.66654 F1=0.28323
+
+========== HOSPITAL FOLD 3/5 ==========
+[Done] Fold=3 Clinical                 AP=0.23263 AUROC=0.67882 F1=0.29123
+[Done] Fold=3 Direct_Bridge8           AP=0.23296 AUROC=0.67928 F1=0.28776
+[Done] Fold=3 MEPS_ER_8                AP=0.23314 AUROC=0.67901 F1=0.28685
+[Done] Fold=3 MEPS_IP_8                AP=0.23220 AUROC=0.67857 F1=0.28966
+[Done] Fold=3 MEPS_Both_8              AP=0.23279 AUROC=0.67836 F1=0.29078
+[Done] Fold=3 Direct8_MEPS_Both8       AP=0.23364 AUROC=0.67936 F1=0.29150
+
+========== HOSPITAL FOLD 4/5 ==========
+[Done] Fold=4 Clinical                 AP=0.23726 AUROC=0.67900 F1=0.29513
+[Done] Fold=4 Direct_Bridge8           AP=0.23605 AUROC=0.68029 F1=0.29495
+[Done] Fold=4 MEPS_ER_8                AP=0.23623 AUROC=0.67935 F1=0.28387
+[Done] Fold=4 MEPS_IP_8                AP=0.23632 AUROC=0.67913 F1=0.29394
+[Done] Fold=4 MEPS_Both_8              AP=0.23709 AUROC=0.67916 F1=0.29553
+[Done] Fold=4 Direct8_MEPS_Both8       AP=0.23811 AUROC=0.67975 F1=0.29212
+
+========== HOSPITAL FOLD 5/5 ==========
+[Done] Fold=5 Clinical                 AP=0.23394 AUROC=0.68295 F1=0.29121
+[Done] Fold=5 Direct_Bridge8           AP=0.23470 AUROC=0.68325 F1=0.29168
+[Done] Fold=5 MEPS_ER_8                AP=0.23540 AUROC=0.68322 F1=0.29182
+[Done] Fold=5 MEPS_IP_8                AP=0.23487 AUROC=0.68309 F1=0.29262
+[Done] Fold=5 MEPS_Both_8              AP=0.23304 AUROC=0.68212 F1=0.28775
+[Done] Fold=5 Direct8_MEPS_Both8       AP=0.23574 AUROC=0.68396 F1=0.29404
+
+========== FINAL 5-FOLD SUMMARY ==========
+        Experiment  AP_mean   AP_std  AUROC_mean  AUROC_std  F1_mean   F1_std  Brier_mean  Brier_std
+          Clinical 0.234919 0.002609    0.678280   0.006630 0.290581 0.005296    0.095664   0.000193
+    Direct_Bridge8 0.235104 0.002492    0.678881   0.006830 0.290241 0.005260    0.095644   0.000204
+         MEPS_ER_8 0.234828 0.002360    0.678292   0.007164 0.287510 0.005754    0.095668   0.000216
+         MEPS_IP_8 0.234870 0.003099    0.678401   0.006912 0.290449 0.005872    0.095655   0.000218
+       MEPS_Both_8 0.234393 0.002695    0.677959   0.006467 0.289234 0.007214    0.095676   0.000195
+Direct8_MEPS_Both8 0.235585 0.002876    0.678829   0.007266 0.291118 0.004601    0.095632   0.000221
+
+========== MEPS VS CLINICAL ==========
+                   Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds  PooledOOF_DeltaAP
+    Direct_Bridge8 - Clinical     0.000185    0.000814              4           0.000197
+         MEPS_ER_8 - Clinical    -0.000090    0.001053              2          -0.000006
+         MEPS_IP_8 - Clinical    -0.000048    0.001004              2           0.000001
+       MEPS_Both_8 - Clinical    -0.000526    0.000506              1          -0.000450
+Direct8_MEPS_Both8 - Clinical     0.000666    0.000946              4           0.000446
+
+========== PATIENT BOOTSTRAP ==========
+                   Comparison  PooledOOF_DeltaAP  CI95_Lower  CI95_Upper  FractionPositive
+    Direct_Bridge8 - Clinical           0.000197   -0.000469    0.000975             0.735
+         MEPS_ER_8 - Clinical          -0.000006   -0.000755    0.000835             0.505
+         MEPS_IP_8 - Clinical           0.000001   -0.000978    0.000990             0.555
+       MEPS_Both_8 - Clinical          -0.000450   -0.001616    0.000579             0.205
+Direct8_MEPS_Both8 - Clinical           0.000446   -0.000393    0.001470             0.785
+
+FINISHED: /media/synology/G/314554044/meps_bridge8_results

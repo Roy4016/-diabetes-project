@@ -1,0 +1,14 @@
+{
+  "input_dirs": [
+    "/media/synology/G/314554044/diabetes_project/results/meps_longitudinal_blend_results",
+    "/media/synology/G/314554044/diabetes_project/results/meps_longitudinal_blend_seed2024",
+    "/media/synology/G/314554044/diabetes_project/results/meps_longitudinal_blend_seed3407"
+  ],
+  "seeds": [
+    777,
+    2024,
+    3407
+  ],
+  "bootstrap": 1000,
+  "note": "Probabilities were averaged across all pre-specified seeds; no seed was selected by test performance."
+}

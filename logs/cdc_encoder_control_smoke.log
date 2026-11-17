@@ -1,0 +1,70 @@
+[Device] cuda
+
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[CDC] Eligible diabetic respondents: 35,346
+  poor_health: prevalence=0.4065
+  diff_walk: prevalence=0.3712
+  inactive: prevalence=0.3695
+  smoker: prevalence=0.5182
+
+========== CDC PRETRAINING ==========
+
+========== CDC PRETRAINING ==========
+[CDC] Epoch 001: train=0.69671, val=0.69026
+[CDC] Epoch 005: train=0.66661, val=0.66313
+[CDC] Epoch 010: train=0.66220, val=0.65938
+[CDC] Epoch 015: train=0.66065, val=0.65781
+[CDC] Epoch 020: train=0.65929, val=0.65672
+[CDC] Epoch 025: train=0.65828, val=0.65574
+[CDC] Epoch 030: train=0.65796, val=0.65578
+
+========== CDC VALIDATION ==========
+poor_health   : AUROC=0.5956, AP=0.4891
+diff_walk     : AUROC=0.6239, AP=0.4610
+inactive      : AUROC=0.5746, AP=0.4207
+smoker        : AUROC=0.5953, AP=0.5944
+
+========== CDC FEATURES ==========
+
+========== TRANSFER TO HOSPITAL ==========
+Embedding shape: (99343, 8)
+Score shape: (99343, 4)
+
+========== RANDOM CONTROL ==========
+
+========== TRANSFER TO HOSPITAL ==========
+Embedding shape: (99343, 8)
+Score shape: (99343, 4)
+[Features] CDC: 12 Random: 12
+
+========== FOLD 1/2 ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [20:32:45] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] Fold=1 Bridge          None         AP=0.22710 AUROC=0.67125 F1=0.28352
+[Done] Fold=1 Bridge          ClassWeight2 AP=0.22809 AUROC=0.67201 F1=0.28723
+[Done] Fold=1 RandomEncoder   None         AP=0.22807 AUROC=0.67183 F1=0.28582
+[Done] Fold=1 RandomEncoder   ClassWeight2 AP=0.22778 AUROC=0.67150 F1=0.28470
+[Done] Fold=1 CDCPretrained   None         AP=0.22794 AUROC=0.67050 F1=0.28403
+[Done] Fold=1 CDCPretrained   ClassWeight2 AP=0.22845 AUROC=0.67087 F1=0.28571
+
+========== FOLD 2/2 ==========
+[Done] Fold=2 Bridge          None         AP=0.22542 AUROC=0.67140 F1=0.27854
+[Done] Fold=2 Bridge          ClassWeight2 AP=0.22636 AUROC=0.67245 F1=0.27408
+[Done] Fold=2 RandomEncoder   None         AP=0.22538 AUROC=0.67153 F1=0.28123
+[Done] Fold=2 RandomEncoder   ClassWeight2 AP=0.22628 AUROC=0.67308 F1=0.27496
+[Done] Fold=2 CDCPretrained   None         AP=0.22572 AUROC=0.67133 F1=0.27850
+[Done] Fold=2 CDCPretrained   ClassWeight2 AP=0.22585 AUROC=0.67210 F1=0.26933
+
+Partial configuration completed. Full paired summary requires all feature sets and IH methods.
+
+========== FINISHED ==========
+/media/synology/G/314554044/cdc_encoder_control_smoke

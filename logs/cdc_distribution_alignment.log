@@ -1,0 +1,76 @@
+
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[CDC] Samples: 35,346
+
+========== TRAIN UNWEIGHTED CDC ==========
+[CDC] Unweighted health models ready.
+
+========== FOLD 1 ==========
+[Domain] Fold=1 AUC=0.9083 ESS=0.2671 weight_p95=5.438
+[Done] Fold=1 E1_Baseline          AP=0.23781 AUROC=0.68214 F1=0.29376
+[Done] Fold=1 E2_Bridge6           AP=0.23715 AUROC=0.68240 F1=0.29431
+[Done] Fold=1 E3_CDC_Health        AP=0.23612 AUROC=0.68115 F1=0.29418
+[Done] Fold=1 E4_Aligned_Health    AP=0.23714 AUROC=0.68121 F1=0.29493
+[Done] Fold=1 E5_Aligned_All       AP=0.23567 AUROC=0.68093 F1=0.29133
+
+========== FOLD 2 ==========
+[Domain] Fold=2 AUC=0.9087 ESS=0.2672 weight_p95=5.438
+[Done] Fold=2 E1_Baseline          AP=0.23384 AUROC=0.66758 F1=0.28850
+[Done] Fold=2 E2_Bridge6           AP=0.23330 AUROC=0.66814 F1=0.28303
+[Done] Fold=2 E3_CDC_Health        AP=0.23442 AUROC=0.66759 F1=0.28423
+[Done] Fold=2 E4_Aligned_Health    AP=0.23435 AUROC=0.66709 F1=0.28251
+[Done] Fold=2 E5_Aligned_All       AP=0.23326 AUROC=0.66775 F1=0.28030
+
+========== FOLD 3 ==========
+[Domain] Fold=3 AUC=0.9076 ESS=0.2682 weight_p95=5.421
+[Done] Fold=3 E1_Baseline          AP=0.23317 AUROC=0.67774 F1=0.28999
+[Done] Fold=3 E2_Bridge6           AP=0.23304 AUROC=0.67844 F1=0.28944
+[Done] Fold=3 E3_CDC_Health        AP=0.23369 AUROC=0.67884 F1=0.29001
+[Done] Fold=3 E4_Aligned_Health    AP=0.23319 AUROC=0.67884 F1=0.28376
+[Done] Fold=3 E5_Aligned_All       AP=0.23152 AUROC=0.67864 F1=0.28941
+
+========== FOLD 4 ==========
+[Domain] Fold=4 AUC=0.9088 ESS=0.2677 weight_p95=5.444
+[Done] Fold=4 E1_Baseline          AP=0.23572 AUROC=0.67657 F1=0.29183
+[Done] Fold=4 E2_Bridge6           AP=0.23569 AUROC=0.67792 F1=0.28937
+[Done] Fold=4 E3_CDC_Health        AP=0.23578 AUROC=0.67781 F1=0.29591
+[Done] Fold=4 E4_Aligned_Health    AP=0.23541 AUROC=0.67786 F1=0.28606
+[Done] Fold=4 E5_Aligned_All       AP=0.23619 AUROC=0.67775 F1=0.29168
+
+========== FOLD 5 ==========
+[Domain] Fold=5 AUC=0.9073 ESS=0.2677 weight_p95=5.438
+[Done] Fold=5 E1_Baseline          AP=0.23359 AUROC=0.68023 F1=0.28517
+[Done] Fold=5 E2_Bridge6           AP=0.23472 AUROC=0.68093 F1=0.29312
+[Done] Fold=5 E3_CDC_Health        AP=0.23462 AUROC=0.68136 F1=0.29268
+[Done] Fold=5 E4_Aligned_Health    AP=0.23416 AUROC=0.68025 F1=0.29132
+[Done] Fold=5 E5_Aligned_All       AP=0.23303 AUROC=0.68000 F1=0.29157
+
+========== FINAL 5-FOLD SUMMARY ==========
+       Experiment  AP_mean  AP_std  AUROC_mean  F1_mean  Brier_mean
+      E1_Baseline  0.23483 0.00193     0.67685  0.28985     0.09569
+       E2_Bridge6  0.23478 0.00171     0.67757  0.28985     0.09567
+    E3_CDC_Health  0.23492 0.00100     0.67735  0.29140     0.09567
+E4_Aligned_Health  0.23485 0.00150     0.67705  0.28771     0.09568
+   E5_Aligned_All  0.23393 0.00195     0.67702  0.28886     0.09572
+
+========== PAIRED CDC COMPARISONS ==========
+                        Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds  TotalFolds
+        E3_CDC_Health - E2_Bridge6      0.00014     0.00081              3           5
+    E4_Aligned_Health - E2_Bridge6      0.00007     0.00061              2           5
+ E4_Aligned_Health - E3_CDC_Health     -0.00007     0.00064              1           5
+E5_Aligned_All - E4_Aligned_Health     -0.00092     0.00098              1           5
+       E5_Aligned_All - E2_Bridge6     -0.00084     0.00101              1           5
+
+========== DOMAIN ALIGNMENT DIAGNOSTICS ==========
+ Fold  domain_train_auc  weight_p95  ESS_fraction
+    1            0.9083      5.4382        0.2671
+    2            0.9087      5.4382        0.2672
+    3            0.9076      5.4209        0.2682
+    4            0.9088      5.4444        0.2677
+    5            0.9073      5.4379        0.2677
+
+========== FINISHED ==========
+Results saved: /media/synology/G/314554044/cdc_distribution_alignment_results

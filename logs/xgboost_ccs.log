@@ -1,0 +1,33 @@
+[AHRQ CCS] source=$dxref 2015.csv, codes=15,072
+[Data] train=69,613, val=14,779, test=14,948
+[Original encoded features] 2339
+[CCS] train/diag_1: mapped=6,495/69,601 (9.33%)
+[CCS] train/diag_2: mapped=9,356/69,358 (13.49%)
+[CCS] train/diag_3: mapped=7,287/68,606 (10.62%)
+[CCS] val/diag_1: mapped=1,338/14,775 (9.06%)
+[CCS] val/diag_2: mapped=1,951/14,729 (13.25%)
+[CCS] val/diag_3: mapped=1,537/14,581 (10.54%)
+[CCS] test/diag_1: mapped=1,416/14,944 (9.48%)
+[CCS] test/diag_2: mapped=1,982/14,897 (13.30%)
+[CCS] test/diag_3: mapped=1,590/14,734 (10.79%)
+[Added encoded CCS features] 136
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [15:21:16] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] xgb_uci_only: best_iteration=135; val_threshold=0.1317; test_AUROC=0.6559; test_AP=0.2291
+[Done] xgb_uci_ccs: best_iteration=71; val_threshold=0.1245; test_AUROC=0.6539; test_AP=0.2292
+       model      split threshold_policy  AUROC  PR_AUC_AP  Precision  Recall     F1  Brier
+xgb_uci_only validation      default_0.5 0.6503     0.1897     0.0000  0.0000 0.0000 0.0936
+xgb_uci_only validation   val_f1_optimal 0.6503     0.1897     0.1889  0.4166 0.2599 0.0936
+xgb_uci_only       test      default_0.5 0.6559     0.2291     0.6957  0.0089 0.0176 0.1014
+xgb_uci_only       test   val_f1_optimal 0.6559     0.2291     0.2068  0.4199 0.2771 0.1014
+ xgb_uci_ccs validation      default_0.5 0.6445     0.1863     0.0000  0.0000 0.0000 0.0938
+ xgb_uci_ccs validation   val_f1_optimal 0.6445     0.1863     0.1809  0.4572 0.2592 0.0938
+ xgb_uci_ccs       test      default_0.5 0.6539     0.2292     0.6364  0.0039 0.0077 0.1016
+ xgb_uci_ccs       test   val_f1_optimal 0.6539     0.2292     0.1969  0.4594 0.2757 0.1016
+Saved to /media/synology/G/314554044/xgboost_ccs_results

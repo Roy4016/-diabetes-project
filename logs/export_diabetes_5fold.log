@@ -1,0 +1,45 @@
+========== LOAD HOSPITAL ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Clinical] 24 features
+Rows: 99,343
+Unique patients: 69,990
+Readmission prevalence: 0.11389
+Clinical features: 24
+Model source features: 71
+
+========== FOLD 1/5 ==========
+Train: (79474, 2459), Test: (19869, 2459)
+Inner train: (63642, 2374), Validation: (15832, 2374)
+Patient overlap: 0
+
+========== FOLD 2/5 ==========
+Train: (79474, 2445), Test: (19869, 2445)
+Inner train: (63696, 2375), Validation: (15778, 2375)
+Patient overlap: 0
+
+========== FOLD 3/5 ==========
+Train: (79475, 2457), Test: (19868, 2457)
+Inner train: (63460, 2378), Validation: (16015, 2378)
+Patient overlap: 0
+
+========== FOLD 4/5 ==========
+Train: (79474, 2461), Test: (19869, 2461)
+Inner train: (63771, 2382), Validation: (15703, 2382)
+Patient overlap: 0
+
+========== FOLD 5/5 ==========
+Train: (79475, 2448), Test: (19868, 2448)
+Inner train: (63532, 2373), Validation: (15943, 2373)
+Patient overlap: 0
+
+========== FINISHED ==========
+ fold  seed  train_rows  test_rows  inner_train_rows  val_rows  train_patients  test_patients  train_prevalence  test_prevalence  outer_feature_count  inner_feature_count  patient_overlap
+    1   777       79474      19869             63642     15832           55947          14043          0.113874         0.113946                 2456                 2371                0
+    2   777       79474      19869             63696     15778           56037          13953          0.113899         0.113846                 2442                 2372                0
+    3   777       79475      19868             63460     16015           56017          13973          0.113897         0.113851                 2454                 2375                0
+    4   777       79474      19869             63771     15703           55962          14028          0.113886         0.113896                 2458                 2379                0
+    5   777       79475      19868             63532     15943           55997          13993          0.113885         0.113902                 2445                 2370                0
+
+Saved: /media/synology/G/314554044/processed_diabetes_5fold

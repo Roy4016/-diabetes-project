@@ -1,0 +1,8 @@
+{
+  "hospital": "diabetic_data.csv",
+  "meps": "datasets/MEPS_2008_2012/meps_diabetes_bridge8.csv",
+  "folds": 5,
+  "seed": 777,
+  "bootstrap": 200,
+  "outdir": "meps_bridge8_results"
+}

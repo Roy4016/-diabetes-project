@@ -1,0 +1,188 @@
+[Device] PyTorch: cuda
+
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[CDC] Eligible diabetic respondents: 35,346
+  poor_health: prevalence=0.4065
+  diff_walk: prevalence=0.3712
+  inactive: prevalence=0.3695
+  smoker: prevalence=0.5182
+
+========== CDC PRETRAINING ==========
+[CDC] Epoch 001: train=0.69671, val=0.69026
+[CDC] Epoch 005: train=0.66661, val=0.66313
+[CDC] Epoch 010: train=0.66220, val=0.65938
+[CDC] Epoch 015: train=0.66065, val=0.65781
+[CDC] Epoch 020: train=0.65929, val=0.65672
+[CDC] Epoch 025: train=0.65828, val=0.65574
+[CDC] Epoch 030: train=0.65796, val=0.65578
+[CDC] Epoch 035: train=0.65775, val=0.65560
+[CDC] Epoch 040: train=0.65763, val=0.65562
+[CDC] Epoch 045: train=0.65763, val=0.65589
+[CDC] Epoch 050: train=0.65739, val=0.65543
+[CDC] Epoch 055: train=0.65734, val=0.65555
+[CDC] Epoch 060: train=0.65726, val=0.65530
+[CDC] Epoch 065: train=0.65703, val=0.65534
+[CDC] Epoch 070: train=0.65694, val=0.65530
+[CDC] Epoch 075: train=0.65674, val=0.65525
+[CDC] Epoch 080: train=0.65670, val=0.65521
+[CDC] Epoch 085: train=0.65656, val=0.65511
+[CDC] Epoch 090: train=0.65649, val=0.65528
+[CDC] Early stopping
+
+========== CDC VALIDATION ==========
+poor_health   : AUROC=0.5971, AP=0.4901
+diff_walk     : AUROC=0.6229, AP=0.4597
+inactive      : AUROC=0.5780, AP=0.4225
+smoker        : AUROC=0.5962, AP=0.5957
+
+========== TRANSFER TO HOSPITAL ==========
+Embedding shape: (99343, 8)
+Score shape: (99343, 4)
+
+========== 5-FOLD CV ==========
+
+========== FOLD 1/5 Train=79,474 Test=19,869 ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [20:11:41] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Inner] Fold=1 E1_Bridge weight=1.000 AP=0.2263 threshold=0.130
+[Inner] Fold=1 E1_Bridge weight=2.000 AP=0.2269 threshold=0.250
+[Inner] Fold=1 E1_Bridge weight=4.000 AP=0.2273 threshold=0.390
+[Inner] Fold=1 E1_Bridge weight=7.798 AP=0.2243 threshold=0.545
+[Done] Fold=1 E1_Bridge: weight=4.000, AP=0.2332, AUROC=0.6799, F1=0.2928
+[Inner] Fold=1 E2_CDC_Scores weight=1.000 AP=0.2268 threshold=0.145
+[Inner] Fold=1 E2_CDC_Scores weight=2.000 AP=0.2251 threshold=0.245
+[Inner] Fold=1 E2_CDC_Scores weight=4.000 AP=0.2257 threshold=0.385
+[Inner] Fold=1 E2_CDC_Scores weight=7.798 AP=0.2236 threshold=0.565
+[Done] Fold=1 E2_CDC_Scores: weight=1.000, AP=0.2355, AUROC=0.6812, F1=0.2920
+[Inner] Fold=1 E3_CDC_Embedding weight=1.000 AP=0.2272 threshold=0.145
+[Inner] Fold=1 E3_CDC_Embedding weight=2.000 AP=0.2265 threshold=0.240
+[Inner] Fold=1 E3_CDC_Embedding weight=4.000 AP=0.2255 threshold=0.365
+[Inner] Fold=1 E3_CDC_Embedding weight=7.798 AP=0.2253 threshold=0.545
+[Done] Fold=1 E3_CDC_Embedding: weight=1.000, AP=0.2353, AUROC=0.6812, F1=0.2927
+[Inner] Fold=1 E4_CDC_Combined weight=1.000 AP=0.2287 threshold=0.145
+[Inner] Fold=1 E4_CDC_Combined weight=2.000 AP=0.2279 threshold=0.245
+[Inner] Fold=1 E4_CDC_Combined weight=4.000 AP=0.2254 threshold=0.385
+[Inner] Fold=1 E4_CDC_Combined weight=7.798 AP=0.2237 threshold=0.545
+[Done] Fold=1 E4_CDC_Combined: weight=1.000, AP=0.2365, AUROC=0.6816, F1=0.2925
+
+========== FOLD 2/5 Train=79,474 Test=19,869 ==========
+[Inner] Fold=2 E1_Bridge weight=1.000 AP=0.2456 threshold=0.145
+[Inner] Fold=2 E1_Bridge weight=2.000 AP=0.2450 threshold=0.230
+[Inner] Fold=2 E1_Bridge weight=4.000 AP=0.2457 threshold=0.375
+[Inner] Fold=2 E1_Bridge weight=7.795 AP=0.2425 threshold=0.565
+[Done] Fold=2 E1_Bridge: weight=4.000, AP=0.2319, AUROC=0.6668, F1=0.2804
+[Inner] Fold=2 E2_CDC_Scores weight=1.000 AP=0.2442 threshold=0.135
+[Inner] Fold=2 E2_CDC_Scores weight=2.000 AP=0.2443 threshold=0.225
+[Inner] Fold=2 E2_CDC_Scores weight=4.000 AP=0.2449 threshold=0.435
+[Inner] Fold=2 E2_CDC_Scores weight=7.795 AP=0.2408 threshold=0.555
+[Done] Fold=2 E2_CDC_Scores: weight=4.000, AP=0.2321, AUROC=0.6663, F1=0.2782
+[Inner] Fold=2 E3_CDC_Embedding weight=1.000 AP=0.2455 threshold=0.135
+[Inner] Fold=2 E3_CDC_Embedding weight=2.000 AP=0.2435 threshold=0.270
+[Inner] Fold=2 E3_CDC_Embedding weight=4.000 AP=0.2446 threshold=0.395
+[Inner] Fold=2 E3_CDC_Embedding weight=7.795 AP=0.2416 threshold=0.565
+[Done] Fold=2 E3_CDC_Embedding: weight=1.000, AP=0.2341, AUROC=0.6671, F1=0.2854
+[Inner] Fold=2 E4_CDC_Combined weight=1.000 AP=0.2455 threshold=0.150
+[Inner] Fold=2 E4_CDC_Combined weight=2.000 AP=0.2459 threshold=0.255
+[Inner] Fold=2 E4_CDC_Combined weight=4.000 AP=0.2450 threshold=0.405
+[Inner] Fold=2 E4_CDC_Combined weight=7.795 AP=0.2421 threshold=0.555
+[Done] Fold=2 E4_CDC_Combined: weight=2.000, AP=0.2328, AUROC=0.6661, F1=0.2828
+
+========== FOLD 3/5 Train=79,475 Test=19,868 ==========
+[Inner] Fold=3 E1_Bridge weight=1.000 AP=0.2292 threshold=0.150
+[Inner] Fold=3 E1_Bridge weight=2.000 AP=0.2294 threshold=0.265
+[Inner] Fold=3 E1_Bridge weight=4.000 AP=0.2261 threshold=0.405
+[Inner] Fold=3 E1_Bridge weight=7.758 AP=0.2250 threshold=0.570
+[Done] Fold=3 E1_Bridge: weight=2.000, AP=0.2307, AUROC=0.6785, F1=0.2876
+[Inner] Fold=3 E2_CDC_Scores weight=1.000 AP=0.2287 threshold=0.150
+[Inner] Fold=3 E2_CDC_Scores weight=2.000 AP=0.2292 threshold=0.255
+[Inner] Fold=3 E2_CDC_Scores weight=4.000 AP=0.2264 threshold=0.410
+[Inner] Fold=3 E2_CDC_Scores weight=7.758 AP=0.2254 threshold=0.565
+[Done] Fold=3 E2_CDC_Scores: weight=2.000, AP=0.2310, AUROC=0.6774, F1=0.2875
+[Inner] Fold=3 E3_CDC_Embedding weight=1.000 AP=0.2286 threshold=0.150
+[Inner] Fold=3 E3_CDC_Embedding weight=2.000 AP=0.2299 threshold=0.260
+[Inner] Fold=3 E3_CDC_Embedding weight=4.000 AP=0.2262 threshold=0.410
+[Inner] Fold=3 E3_CDC_Embedding weight=7.758 AP=0.2246 threshold=0.590
+[Done] Fold=3 E3_CDC_Embedding: weight=2.000, AP=0.2305, AUROC=0.6787, F1=0.2871
+[Inner] Fold=3 E4_CDC_Combined weight=1.000 AP=0.2287 threshold=0.150
+[Inner] Fold=3 E4_CDC_Combined weight=2.000 AP=0.2296 threshold=0.255
+[Inner] Fold=3 E4_CDC_Combined weight=4.000 AP=0.2263 threshold=0.405
+[Inner] Fold=3 E4_CDC_Combined weight=7.758 AP=0.2246 threshold=0.545
+[Done] Fold=3 E4_CDC_Combined: weight=2.000, AP=0.2307, AUROC=0.6778, F1=0.2858
+
+========== FOLD 4/5 Train=79,474 Test=19,869 ==========
+[Inner] Fold=4 E1_Bridge weight=1.000 AP=0.2288 threshold=0.125
+[Inner] Fold=4 E1_Bridge weight=2.000 AP=0.2277 threshold=0.235
+[Inner] Fold=4 E1_Bridge weight=4.000 AP=0.2267 threshold=0.380
+[Inner] Fold=4 E1_Bridge weight=7.788 AP=0.2236 threshold=0.570
+[Done] Fold=4 E1_Bridge: weight=1.000, AP=0.2340, AUROC=0.6775, F1=0.2880
+[Inner] Fold=4 E2_CDC_Scores weight=1.000 AP=0.2289 threshold=0.120
+[Inner] Fold=4 E2_CDC_Scores weight=2.000 AP=0.2265 threshold=0.240
+[Inner] Fold=4 E2_CDC_Scores weight=4.000 AP=0.2256 threshold=0.380
+[Inner] Fold=4 E2_CDC_Scores weight=7.788 AP=0.2236 threshold=0.520
+[Done] Fold=4 E2_CDC_Scores: weight=1.000, AP=0.2352, AUROC=0.6779, F1=0.2851
+[Inner] Fold=4 E3_CDC_Embedding weight=1.000 AP=0.2299 threshold=0.125
+[Inner] Fold=4 E3_CDC_Embedding weight=2.000 AP=0.2290 threshold=0.225
+[Inner] Fold=4 E3_CDC_Embedding weight=4.000 AP=0.2268 threshold=0.370
+[Inner] Fold=4 E3_CDC_Embedding weight=7.788 AP=0.2225 threshold=0.550
+[Done] Fold=4 E3_CDC_Embedding: weight=1.000, AP=0.2345, AUROC=0.6780, F1=0.2867
+[Inner] Fold=4 E4_CDC_Combined weight=1.000 AP=0.2286 threshold=0.125
+[Inner] Fold=4 E4_CDC_Combined weight=2.000 AP=0.2290 threshold=0.230
+[Inner] Fold=4 E4_CDC_Combined weight=4.000 AP=0.2250 threshold=0.375
+[Inner] Fold=4 E4_CDC_Combined weight=7.788 AP=0.2232 threshold=0.520
+[Done] Fold=4 E4_CDC_Combined: weight=2.000, AP=0.2357, AUROC=0.6790, F1=0.2931
+
+========== FOLD 5/5 Train=79,475 Test=19,868 ==========
+[Inner] Fold=5 E1_Bridge weight=1.000 AP=0.2476 threshold=0.150
+[Inner] Fold=5 E1_Bridge weight=2.000 AP=0.2465 threshold=0.250
+[Inner] Fold=5 E1_Bridge weight=4.000 AP=0.2457 threshold=0.420
+[Inner] Fold=5 E1_Bridge weight=7.753 AP=0.2427 threshold=0.585
+[Done] Fold=5 E1_Bridge: weight=1.000, AP=0.2347, AUROC=0.6814, F1=0.2915
+[Inner] Fold=5 E2_CDC_Scores weight=1.000 AP=0.2457 threshold=0.155
+[Inner] Fold=5 E2_CDC_Scores weight=2.000 AP=0.2458 threshold=0.260
+[Inner] Fold=5 E2_CDC_Scores weight=4.000 AP=0.2460 threshold=0.415
+[Inner] Fold=5 E2_CDC_Scores weight=7.753 AP=0.2418 threshold=0.590
+[Done] Fold=5 E2_CDC_Scores: weight=4.000, AP=0.2325, AUROC=0.6807, F1=0.2861
+[Inner] Fold=5 E3_CDC_Embedding weight=1.000 AP=0.2479 threshold=0.155
+[Inner] Fold=5 E3_CDC_Embedding weight=2.000 AP=0.2461 threshold=0.260
+[Inner] Fold=5 E3_CDC_Embedding weight=4.000 AP=0.2443 threshold=0.400
+[Inner] Fold=5 E3_CDC_Embedding weight=7.753 AP=0.2417 threshold=0.585
+[Done] Fold=5 E3_CDC_Embedding: weight=1.000, AP=0.2341, AUROC=0.6810, F1=0.2894
+[Inner] Fold=5 E4_CDC_Combined weight=1.000 AP=0.2472 threshold=0.145
+[Inner] Fold=5 E4_CDC_Combined weight=2.000 AP=0.2442 threshold=0.265
+[Inner] Fold=5 E4_CDC_Combined weight=4.000 AP=0.2443 threshold=0.415
+[Inner] Fold=5 E4_CDC_Combined weight=7.753 AP=0.2432 threshold=0.585
+[Done] Fold=5 E4_CDC_Combined: weight=1.000, AP=0.2353, AUROC=0.6818, F1=0.2919
+
+========== FINAL 5-FOLD SUMMARY ==========
+      Experiment  AP_mean  AP_std  AUROC_mean  AUROC_std  F1_mean  F1_std  Brier_mean
+       E1_Bridge  0.23290 0.00161     0.67682    0.00581  0.28806 0.00480     0.11481
+   E2_CDC_Scores  0.23327 0.00198     0.67669    0.00605  0.28579 0.00499     0.11482
+E3_CDC_Embedding  0.23373 0.00185     0.67721    0.00582  0.28828 0.00286     0.09723
+ E4_CDC_Combined  0.23419 0.00242     0.67726    0.00646  0.28923 0.00461     0.10025
+
+========== CDC VS BRIDGE ==========
+      Experiment  MeanDeltaAP  StdDeltaAP  PositiveFolds  TotalFolds
+   E2_CDC_Scores      0.00036     0.00167              4           5
+E3_CDC_Embedding      0.00082     0.00127              3           5
+ E4_CDC_Combined      0.00128     0.00129              4           5
+
+========== SELECTED WEIGHTS ==========
+Experiment  E1_Bridge  E2_CDC_Scores  E3_CDC_Embedding  E4_CDC_Combined
+Fold                                                                   
+1                 4.0            1.0               1.0              1.0
+2                 4.0            4.0               1.0              2.0
+3                 2.0            2.0               2.0              2.0
+4                 1.0            1.0               1.0              2.0
+5                 1.0            4.0               1.0              1.0
+
+========== FINISHED ==========
+Saved to: /media/synology/G/314554044/cdc_encoder_cv_results

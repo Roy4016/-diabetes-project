@@ -1,0 +1,43 @@
+{
+  "config": {
+    "folds_dir": "/media/synology/G/314554044/diabetes_project/data/processed/uci_5fold",
+    "uci_csv": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+    "event_csv": "/media/synology/G/314554044/diabetes_project/data/processed/meps_events_2008_2012/meps_diabetes_event_30d_model.csv",
+    "output_dir": "results/meps_event_blend_results",
+    "max_folds": 5,
+    "seed": 777,
+    "embedding_dim": 16,
+    "pretrain_epochs": 50,
+    "patience": 6,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "er_weight": 0.2,
+    "xgb_estimators": 300,
+    "xgb_early_stopping": 25,
+    "max_external_weight": 0.6,
+    "blend_steps": 13,
+    "min_blend_gain": 0.0,
+    "bootstrap": 1000,
+    "device": "cpu"
+  },
+  "true_external_validation": {
+    "events": 2688,
+    "train_events": 2163,
+    "validation_events": 525,
+    "best_epoch": 35,
+    "readmission_AP": 0.2398588513842463,
+    "readmission_AUROC": 0.6694505494505495,
+    "er_revisit_AP": 0.17585184773770174,
+    "er_revisit_AUROC": 0.6021234512613822
+  },
+  "shuffled_external_validation": {
+    "events": 2688,
+    "train_events": 2163,
+    "validation_events": 525,
+    "best_epoch": 18,
+    "readmission_AP": 0.14657430890069978,
+    "readmission_AUROC": 0.4906436420722135,
+    "er_revisit_AP": 0.0928001177005856,
+    "er_revisit_AUROC": 0.4063106433796089
+  }
+}

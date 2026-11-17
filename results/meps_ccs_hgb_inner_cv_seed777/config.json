@@ -1,0 +1,15 @@
+{
+  "hospital": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+  "ccs_file": "/media/synology/G/314554044/diabetes_project/data/raw/ahrq/Single_Level_CCS_2015.zip",
+  "event_data": "data/processed/meps_events_2008_2012/meps_diabetes_event_30d_model.csv",
+  "event_ccs": "data/processed/meps_events_2008_2012/meps_inpatient_event_ccs.csv",
+  "reference_oof": "results/meps_ccs_group_hgb_seed777/oof_all.csv",
+  "outdir": "results/meps_ccs_hgb_inner_cv_seed777",
+  "folds": 5,
+  "inner_folds": 3,
+  "min_group": 30,
+  "alpha": 50.0,
+  "min_frequency": 100,
+  "bootstrap": 2000,
+  "seed": 777
+}

@@ -1,0 +1,88 @@
+[Device] cuda
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Clinical] 24 features
+[Hospital] 99,343 rows; 69,990 patients; readmission=0.1139
+[MEPS] 12,449 rows; 7,991 people; ER=0.2184; IP=0.1657
+[Inputs] 71 Hospital source columns; 12 bridge columns
+
+========== MEPS PRETRAINING ==========
+[MEPS] epoch=01 val_loss=0.65079
+[MEPS] epoch=05 val_loss=0.49017
+[MEPS] epoch=10 val_loss=0.46914
+[MEPS] epoch=15 val_loss=0.46737
+[MEPS] epoch=20 val_loss=0.46704
+[MEPS] epoch=25 val_loss=0.46688
+[MEPS] epoch=30 val_loss=0.46680
+[MEPS] Best epoch=30, loss=0.46680
+[MEPS] ER AP=0.32822 AUROC=0.62750
+[MEPS] IP AP=0.28783 AUROC=0.66881
+[MEPS] Encoder saved
+
+========== FOLD 1/5 ==========
+[Split] Train=79,474 Inner=63,642 Val=15,832 Test=19,869 features=2456
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [05:35:44] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] Fold=1 Clinical_XGB        AP=0.23813 AUROC=0.68355 F1=0.29374 epochs=nan
+[Done] Fold=1 UCI_MLP             AP=0.22617 AUROC=0.67334 F1=0.27952 epochs=7
+[Done] Fold=1 MEPS_Pretrained     AP=0.22578 AUROC=0.67242 F1=0.27892 epochs=6
+[Done] Fold=1 MEPS_Multitask      AP=0.22540 AUROC=0.67222 F1=0.27980 epochs=7
+
+========== FOLD 2/5 ==========
+[Split] Train=79,474 Inner=63,696 Val=15,778 Test=19,869 features=2442
+[Done] Fold=2 Clinical_XGB        AP=0.23263 AUROC=0.66708 F1=0.28160 epochs=nan
+[Done] Fold=2 UCI_MLP             AP=0.22187 AUROC=0.66752 F1=0.26625 epochs=7
+[Done] Fold=2 MEPS_Pretrained     AP=0.22227 AUROC=0.66875 F1=0.27268 epochs=6
+[Done] Fold=2 MEPS_Multitask      AP=0.22371 AUROC=0.66814 F1=0.26247 epochs=6
+
+========== FOLD 3/5 ==========
+[Split] Train=79,475 Inner=63,460 Val=16,015 Test=19,868 features=2454
+[Done] Fold=3 Clinical_XGB        AP=0.23263 AUROC=0.67882 F1=0.29123 epochs=nan
+[Done] Fold=3 UCI_MLP             AP=0.21664 AUROC=0.67046 F1=0.27251 epochs=9
+[Done] Fold=3 MEPS_Pretrained     AP=0.21412 AUROC=0.67532 F1=0.27983 epochs=4
+[Done] Fold=3 MEPS_Multitask      AP=0.21801 AUROC=0.67314 F1=0.27459 epochs=7
+
+========== FOLD 4/5 ==========
+[Split] Train=79,474 Inner=63,771 Val=15,703 Test=19,869 features=2458
+[Done] Fold=4 Clinical_XGB        AP=0.23726 AUROC=0.67900 F1=0.29513 epochs=nan
+[Done] Fold=4 UCI_MLP             AP=0.22918 AUROC=0.67150 F1=0.28708 epochs=5
+[Done] Fold=4 MEPS_Pretrained     AP=0.22849 AUROC=0.67170 F1=0.28620 epochs=5
+[Done] Fold=4 MEPS_Multitask      AP=0.22952 AUROC=0.67213 F1=0.28530 epochs=5
+
+========== FOLD 5/5 ==========
+[Split] Train=79,475 Inner=63,532 Val=15,943 Test=19,868 features=2445
+[Done] Fold=5 Clinical_XGB        AP=0.23394 AUROC=0.68295 F1=0.29121 epochs=nan
+[Done] Fold=5 UCI_MLP             AP=0.21648 AUROC=0.66782 F1=0.25988 epochs=13
+[Done] Fold=5 MEPS_Pretrained     AP=0.22248 AUROC=0.67287 F1=0.27149 epochs=8
+[Done] Fold=5 MEPS_Multitask      AP=0.22197 AUROC=0.67099 F1=0.28238 epochs=8
+
+========== FINAL 5-FOLD SUMMARY ==========
+     Experiment  AP_mean   AP_std  AUROC_mean  AUROC_std  F1_mean   F1_std  Brier_mean  Brier_std
+   Clinical_XGB 0.234919 0.002609    0.678280   0.006630 0.290581 0.005296    0.095664   0.000193
+        UCI_MLP 0.222066 0.005660    0.670126   0.002470 0.273047 0.010707    0.096756   0.000501
+MEPS_Pretrained 0.222629 0.005404    0.672212   0.002366 0.277824 0.005956    0.096483   0.000190
+ MEPS_Multitask 0.223721 0.004248    0.671323   0.001936 0.276909 0.008984    0.096493   0.000198
+
+========== PAIRED COMPARISONS ==========
+                    Comparison  MeanDeltaAP  PositiveFolds  PooledOOF_DeltaAP
+     MEPS_Pretrained - UCI_MLP     0.000562              2           0.001847
+      MEPS_Multitask - UCI_MLP     0.001655              4           0.003363
+MEPS_Pretrained - Clinical_XGB    -0.012290              0          -0.014883
+ MEPS_Multitask - Clinical_XGB    -0.011198              0          -0.013367
+
+========== PATIENT BOOTSTRAP ==========
+                    Comparison   DeltaAP  CI95_Lower  CI95_Upper
+     MEPS_Pretrained - UCI_MLP  0.001847   -0.000273    0.003726
+      MEPS_Multitask - UCI_MLP  0.003363    0.001751    0.004973
+MEPS_Pretrained - Clinical_XGB -0.014883   -0.018363   -0.011437
+ MEPS_Multitask - Clinical_XGB -0.013367   -0.016753   -0.009975
+
+========== FINISHED ==========
+Saved: /media/synology/G/314554044/meps_multitask_results

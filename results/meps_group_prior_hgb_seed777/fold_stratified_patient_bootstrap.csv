@@ -1,0 +1,5 @@
+Comparison,MeanFold_Delta_PR_AUC,CI95_Lower,CI95_Upper,FractionPositive,BootstrapReplicates,ResamplingUnit
+meps_group_prior - hospital_group_prior,-0.0013507799065026582,-0.0029116212465868374,0.00029323808640226195,0.0525,2000,patient within fold
+meps_group_prior - ccs_meps_group_hgb,-0.0032836754579095516,-0.005326556613898265,-0.0011116551076598275,0.0005,2000,patient within fold
+meps_group_prior - ccs_only_hgb,-0.0035196276028369835,-0.005492559061829725,-0.0015447581731665686,0.0005,2000,patient within fold
+hospital_group_prior - ccs_only_hgb,-0.002168847696334325,-0.00410912310623055,-0.00013490901678635608,0.0205,2000,patient within fold

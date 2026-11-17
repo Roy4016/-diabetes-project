@@ -1,0 +1,5 @@
+Comparison,MeanFold_Delta_PR_AUC,CI95_Lower,CI95_Upper,FractionPositive,BootstrapReplicates,ResamplingUnit
+ensemble_fixed_50 - hgb_tuned,0.0002384028148366524,-0.001029219593433327,0.0015439932331489238,0.6215,2000,patient within fold
+ensemble_nested - hgb_tuned,-0.00023133505541007572,-0.001529869078056609,0.001090997514075449,0.3725,2000,patient within fold
+ensemble_nested - ensemble_fixed_50,-0.0004697378702467281,-0.0008477622558658604,-8.484459258159882e-05,0.006,2000,patient within fold
+xgb_meps_tuned - hgb_tuned,-0.002645641236501073,-0.005057241497649702,-0.000247814038208696,0.0145,2000,patient within fold

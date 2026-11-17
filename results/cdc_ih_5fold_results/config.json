@@ -1,0 +1,18 @@
+{
+  "seed": 777,
+  "folds": 5,
+  "ratio": 0.3,
+  "features": [
+    "Baseline",
+    "Bridge",
+    "CDC_All",
+    "CDC_Multi"
+  ],
+  "methods": [
+    "None",
+    "ClassWeight",
+    "ROS",
+    "RUS",
+    "SMOTE"
+  ]
+}

@@ -1,0 +1,191 @@
+
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Clinical] Created 24 features
+[CDC] Diabetic respondents: 35,346
+
+========== CDC TRAINING ==========
+[CDC] Trained cdc_poor_health
+[CDC] Trained cdc_phys_days
+[CDC] Trained cdc_diff_walk
+
+========== CDC FEATURE TRANSFER ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [00:31:02] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[CDC] Score range: 0.10863006114959717 0.7373437881469727
+
+========== FOLD 1/5 ==========
+[Stratification] Fold=1 cuts=(0.2458, 0.2853)
+[Done] Fold=1 E1_Baseline               AP=0.23781 AUROC=0.68214 F1=0.29376
+[Done] Fold=1 E2_Clinical               AP=0.23813 AUROC=0.68355 F1=0.29374
+[Done] Fold=1 E4_Clinical_CDCHealth     AP=0.23779 AUROC=0.68327 F1=0.29494
+[Done] Fold=1 No_GenHlth                AP=0.23810 AUROC=0.68316 F1=0.29118
+[Done] Fold=1 No_PhysHlth               AP=0.23858 AUROC=0.68305 F1=0.29575
+[Done] Fold=1 No_DiffWalk               AP=0.23634 AUROC=0.68354 F1=0.29398
+[Done] Fold=1 Only_GenHlth              AP=0.23846 AUROC=0.68452 F1=0.29794
+[Done] Fold=1 Only_PhysHlth             AP=0.23779 AUROC=0.68434 F1=0.29585
+[Done] Fold=1 Only_DiffWalk             AP=0.23922 AUROC=0.68421 F1=0.29272
+
+========== FOLD 2/5 ==========
+[Stratification] Fold=2 cuts=(0.2458, 0.2853)
+[Done] Fold=2 E1_Baseline               AP=0.23384 AUROC=0.66758 F1=0.28850
+[Done] Fold=2 E2_Clinical               AP=0.23263 AUROC=0.66708 F1=0.28160
+[Done] Fold=2 E4_Clinical_CDCHealth     AP=0.23398 AUROC=0.66728 F1=0.28169
+[Done] Fold=2 No_GenHlth                AP=0.23265 AUROC=0.66677 F1=0.28213
+[Done] Fold=2 No_PhysHlth               AP=0.23262 AUROC=0.66658 F1=0.28202
+[Done] Fold=2 No_DiffWalk               AP=0.23323 AUROC=0.66708 F1=0.28168
+[Done] Fold=2 Only_GenHlth              AP=0.23247 AUROC=0.66666 F1=0.28210
+[Done] Fold=2 Only_PhysHlth             AP=0.23161 AUROC=0.66585 F1=0.27805
+[Done] Fold=2 Only_DiffWalk             AP=0.23206 AUROC=0.66568 F1=0.27536
+
+========== FOLD 3/5 ==========
+[Stratification] Fold=3 cuts=(0.2458, 0.2853)
+[Done] Fold=3 E1_Baseline               AP=0.23317 AUROC=0.67774 F1=0.28999
+[Done] Fold=3 E2_Clinical               AP=0.23263 AUROC=0.67882 F1=0.29123
+[Done] Fold=3 E4_Clinical_CDCHealth     AP=0.23325 AUROC=0.67982 F1=0.29007
+[Done] Fold=3 No_GenHlth                AP=0.23170 AUROC=0.67792 F1=0.28636
+[Done] Fold=3 No_PhysHlth               AP=0.23174 AUROC=0.67847 F1=0.29154
+[Done] Fold=3 No_DiffWalk               AP=0.23218 AUROC=0.67845 F1=0.28710
+[Done] Fold=3 Only_GenHlth              AP=0.23191 AUROC=0.67815 F1=0.29030
+[Done] Fold=3 Only_PhysHlth             AP=0.23217 AUROC=0.67725 F1=0.28661
+[Done] Fold=3 Only_DiffWalk             AP=0.23276 AUROC=0.67829 F1=0.28922
+
+========== FOLD 4/5 ==========
+[Stratification] Fold=4 cuts=(0.2458, 0.2853)
+[Done] Fold=4 E1_Baseline               AP=0.23572 AUROC=0.67657 F1=0.29183
+[Done] Fold=4 E2_Clinical               AP=0.23726 AUROC=0.67900 F1=0.29513
+[Done] Fold=4 E4_Clinical_CDCHealth     AP=0.23671 AUROC=0.67959 F1=0.29383
+[Done] Fold=4 No_GenHlth                AP=0.23659 AUROC=0.67920 F1=0.29204
+[Done] Fold=4 No_PhysHlth               AP=0.23773 AUROC=0.67966 F1=0.29180
+[Done] Fold=4 No_DiffWalk               AP=0.23595 AUROC=0.67889 F1=0.29460
+[Done] Fold=4 Only_GenHlth              AP=0.23554 AUROC=0.67965 F1=0.29530
+[Done] Fold=4 Only_PhysHlth             AP=0.23596 AUROC=0.67962 F1=0.28734
+[Done] Fold=4 Only_DiffWalk             AP=0.23644 AUROC=0.67948 F1=0.29458
+
+========== FOLD 5/5 ==========
+[Stratification] Fold=5 cuts=(0.2458, 0.2853)
+[Done] Fold=5 E1_Baseline               AP=0.23359 AUROC=0.68023 F1=0.28517
+[Done] Fold=5 E2_Clinical               AP=0.23394 AUROC=0.68295 F1=0.29121
+[Done] Fold=5 E4_Clinical_CDCHealth     AP=0.23456 AUROC=0.68206 F1=0.29178
+[Done] Fold=5 No_GenHlth                AP=0.23449 AUROC=0.68193 F1=0.29123
+[Done] Fold=5 No_PhysHlth               AP=0.23340 AUROC=0.68162 F1=0.29279
+[Done] Fold=5 No_DiffWalk               AP=0.23285 AUROC=0.68158 F1=0.29106
+[Done] Fold=5 Only_GenHlth              AP=0.23441 AUROC=0.68261 F1=0.29051
+[Done] Fold=5 Only_PhysHlth             AP=0.23417 AUROC=0.68228 F1=0.29133
+[Done] Fold=5 Only_DiffWalk             AP=0.23493 AUROC=0.68254 F1=0.29474
+
+========== FINAL 5-FOLD SUMMARY ==========
+           Experiment  AP_mean  AP_std  AUROC_mean  F1_mean  Brier_mean
+          E1_Baseline  0.23483 0.00193     0.67685  0.28985     0.09569
+          E2_Clinical  0.23492 0.00261     0.67828  0.29058     0.09566
+E4_Clinical_CDCHealth  0.23526 0.00192     0.67840  0.29046     0.09564
+           No_GenHlth  0.23471 0.00267     0.67779  0.28859     0.09567
+          No_PhysHlth  0.23482 0.00312     0.67788  0.29078     0.09566
+          No_DiffWalk  0.23411 0.00190     0.67791  0.28969     0.09569
+         Only_GenHlth  0.23456 0.00263     0.67832  0.29123     0.09567
+        Only_PhysHlth  0.23434 0.00258     0.67787  0.28783     0.09569
+        Only_DiffWalk  0.23508 0.00290     0.67804  0.28933     0.09566
+
+========== PAIRED AP COMPARISONS ==========
+                           Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds
+            E1_Baseline - E2_Clinical     -0.00009     0.00104              2
+  E4_Clinical_CDCHealth - E2_Clinical      0.00034     0.00078              3
+             No_GenHlth - E2_Clinical     -0.00021     0.00060              2
+            No_PhysHlth - E2_Clinical     -0.00010     0.00060              2
+            No_DiffWalk - E2_Clinical     -0.00081     0.00092              1
+           Only_GenHlth - E2_Clinical     -0.00036     0.00089              2
+          Only_PhysHlth - E2_Clinical     -0.00058     0.00060              1
+          Only_DiffWalk - E2_Clinical      0.00017     0.00087              3
+  E1_Baseline - E4_Clinical_CDCHealth     -0.00043     0.00050              1
+  E2_Clinical - E4_Clinical_CDCHealth     -0.00034     0.00078              2
+   No_GenHlth - E4_Clinical_CDCHealth     -0.00055     0.00083              1
+  No_PhysHlth - E4_Clinical_CDCHealth     -0.00044     0.00124              2
+  No_DiffWalk - E4_Clinical_CDCHealth     -0.00115     0.00043              0
+ Only_GenHlth - E4_Clinical_CDCHealth     -0.00070     0.00093              1
+Only_PhysHlth - E4_Clinical_CDCHealth     -0.00092     0.00091              0
+Only_DiffWalk - E4_Clinical_CDCHealth     -0.00017     0.00123              2
+
+========== HEALTH BURDEN STRATIFICATION ==========
+RiskGroup     N  Positive  ReadmissionRate  MeanCDCScore
+      Low 32523      3798          0.11678       0.18440
+   Medium 30589      3565          0.11655       0.25458
+     High 36231      3951          0.10905       0.37451
+
+========== AGE STRATIFICATION ==========
+AgeGroup RiskGroup     N  Positive  ReadmissionRate  MeanCDCScore
+     <50       Low 12877      1427          0.11082       0.19032
+     <50    Medium    24         2          0.08333       0.26924
+     <50      High  2969       298          0.10037       0.36754
+   50-59       Low  4778       476          0.09962       0.17235
+   50-59    Medium  6523       699          0.10716       0.26024
+   50-59      High  5759       492          0.08543       0.42664
+   60-69       Low  6300       799          0.12683       0.18392
+   60-69    Medium  8063       891          0.11050       0.25163
+   60-69      High  7696       803          0.10434       0.41886
+   70-79       Low  8526      1094          0.12831       0.18233
+   70-79    Medium 10594      1288          0.12158       0.25389
+   70-79      High  6211       672          0.10820       0.38337
+     80+       Low    42         2          0.04762       0.23674
+     80+    Medium  5385       685          0.12721       0.25345
+     80+      High 13596      1686          0.12401       0.32480
+
+========== CDC SCORE CORRELATIONS ==========
+AgeGroup     N  ReadmissionRate  Spearman_Score_vs_Readmission
+     ALL 99343          0.11389                       -0.01524
+     <50 15870          0.10882                       -0.00411
+   50-59 17060          0.09771                       -0.02105
+   60-69 22059          0.11302                       -0.02520
+   70-79 25331          0.12056                       -0.02770
+     80+ 19023          0.12474                       -0.00904
+
+========== SUBGROUP CDC BENEFIT ==========
+   GroupType  Group     N  Prevalence  AP_Clinical  AP_ClinicalCDC  DeltaAP
+         ALL    ALL 99343     0.11389      0.23369         0.23395  0.00026
+         Age    <50 15870     0.10882      0.28119         0.28003 -0.00115
+         Age  50-59 17060     0.09771      0.23468         0.23398 -0.00070
+         Age  60-69 22059     0.11302      0.23044         0.23165  0.00121
+         Age  70-79 25331     0.12056      0.22406         0.22358 -0.00048
+         Age    80+ 19023     0.12474      0.20880         0.21166  0.00286
+HealthBurden    Low 32523     0.11678      0.26545         0.26456 -0.00089
+HealthBurden Medium 30589     0.11655      0.22604         0.22563 -0.00042
+HealthBurden   High 36231     0.10905      0.20796         0.21014  0.00218
+
+========== TOP 20 SHAP FEATURES ==========
+ Rank                                   Feature  MeanAbsSHAP  StdAbsSHAP
+    1                    f0006_number_inpatient     0.214498    0.023607
+    2          f0072_discharge_disposition_id_1     0.166821    0.010214
+    3              f0126_payer_code___MISSING__     0.046756         NaN
+    4         f0027_clinical_total_prior_visits     0.045502    0.008067
+    5              f0127_payer_code___MISSING__     0.045186    0.006195
+    6              f0125_payer_code___MISSING__     0.044920         NaN
+    7                    f0007_number_diagnoses     0.040285    0.003736
+    8         f0080_discharge_disposition_id_22     0.039635    0.003890
+    9      f0020_clinical_active_diabetes_drugs     0.034308    0.003995
+   10       f0024_clinical_log_number_inpatient     0.032297    0.024490
+   11 f0031_clinical_comorbidity_x_prior_visits     0.031643    0.007722
+   12                    f0000_time_in_hospital     0.031586    0.004299
+   13          f0086_discharge_disposition_id_3     0.028198    0.004708
+   14      f0017_clinical_diabetes_complication     0.026528    0.004395
+   15                         f0049_age__50-60)     0.025295    0.005114
+   16                     f0003_num_medications     0.022096    0.007888
+   17                    f0005_number_emergency     0.019761    0.005111
+   18          f0018_clinical_comorbidity_count     0.019382    0.003702
+   19               f2382_A1Cresult___MISSING__     0.018140         NaN
+   20                          f1686_diag_3_250     0.017948         NaN
+
+========== CDC SHAP FEATURES ==========
+ Rank               Feature  MeanAbsSHAP  StdAbsSHAP
+   28   f0034_cdc_diff_walk     0.014092    0.004075
+   32 f0032_cdc_poor_health     0.012684    0.004218
+   74   f0033_cdc_phys_days     0.007092    0.000975
+
+========== FINISHED ==========
+Results saved: /media/synology/G/314554044/cdc_clinical_interpretability_results

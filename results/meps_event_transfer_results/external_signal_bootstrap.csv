@@ -1,0 +1,2 @@
+Comparison,PooledOOF_DeltaAP,CI95_Lower,CI95_Upper,FractionPositive,Bootstraps
+event_pretrained - event_shuffled,0.0009591175884692549,0.00016352771044067377,0.0017931737119297089,0.992,1000

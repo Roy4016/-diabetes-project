@@ -1,0 +1,165 @@
+[Device] cuda
+
+========== LOAD DATA ==========
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[CDC] Eligible diabetic respondents: 35,346
+  poor_health: prevalence=0.4065
+  diff_walk: prevalence=0.3712
+  inactive: prevalence=0.3695
+  smoker: prevalence=0.5182
+
+========== CDC PRETRAINING ==========
+
+========== CDC PRETRAINING ==========
+[CDC] Epoch 001: train=0.69671, val=0.69026
+[CDC] Epoch 005: train=0.66661, val=0.66313
+[CDC] Epoch 010: train=0.66220, val=0.65938
+[CDC] Epoch 015: train=0.66065, val=0.65781
+[CDC] Epoch 020: train=0.65929, val=0.65672
+[CDC] Epoch 025: train=0.65828, val=0.65574
+[CDC] Epoch 030: train=0.65796, val=0.65578
+[CDC] Epoch 035: train=0.65775, val=0.65560
+[CDC] Epoch 040: train=0.65763, val=0.65562
+[CDC] Epoch 045: train=0.65763, val=0.65589
+[CDC] Epoch 050: train=0.65739, val=0.65543
+[CDC] Epoch 055: train=0.65734, val=0.65555
+[CDC] Epoch 060: train=0.65726, val=0.65530
+[CDC] Epoch 065: train=0.65703, val=0.65534
+[CDC] Epoch 070: train=0.65694, val=0.65530
+[CDC] Epoch 075: train=0.65674, val=0.65525
+[CDC] Epoch 080: train=0.65670, val=0.65521
+[CDC] Epoch 085: train=0.65656, val=0.65511
+[CDC] Epoch 090: train=0.65649, val=0.65528
+[CDC] Early stopping
+
+========== CDC VALIDATION ==========
+poor_health   : AUROC=0.5971, AP=0.4901
+diff_walk     : AUROC=0.6229, AP=0.4597
+inactive      : AUROC=0.5780, AP=0.4225
+smoker        : AUROC=0.5962, AP=0.5957
+
+========== CDC FEATURES ==========
+
+========== TRANSFER TO HOSPITAL ==========
+Embedding shape: (99343, 8)
+Score shape: (99343, 4)
+
+========== RANDOM CONTROL ==========
+
+========== TRANSFER TO HOSPITAL ==========
+Embedding shape: (99343, 8)
+Score shape: (99343, 4)
+[Features] CDC: 12 Random: 12
+
+========== FOLD 1/5 ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [20:38:07] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[Done] Fold=1 Bridge          None         AP=0.23462 AUROC=0.68143 F1=0.29176
+[Done] Fold=1 Bridge          ClassWeight2 AP=0.23419 AUROC=0.68080 F1=0.28971
+[Done] Fold=1 Bridge          ClassWeight4 AP=0.23253 AUROC=0.68110 F1=0.28914
+[Done] Fold=1 Bridge          SMOTENC      AP=0.22670 AUROC=0.66989 F1=0.28576
+[Done] Fold=1 RandomEncoder   None         AP=0.23585 AUROC=0.68257 F1=0.29488
+[Done] Fold=1 RandomEncoder   ClassWeight2 AP=0.23452 AUROC=0.68179 F1=0.29391
+[Done] Fold=1 RandomEncoder   ClassWeight4 AP=0.23279 AUROC=0.68108 F1=0.29308
+[Done] Fold=1 RandomEncoder   SMOTENC      AP=0.22716 AUROC=0.67084 F1=0.28551
+[Done] Fold=1 CDCPretrained   None         AP=0.23549 AUROC=0.68240 F1=0.29346
+[Done] Fold=1 CDCPretrained   ClassWeight2 AP=0.23492 AUROC=0.68219 F1=0.29290
+[Done] Fold=1 CDCPretrained   ClassWeight4 AP=0.23281 AUROC=0.68137 F1=0.29151
+[Done] Fold=1 CDCPretrained   SMOTENC      AP=0.22382 AUROC=0.66682 F1=0.28120
+
+========== FOLD 2/5 ==========
+[Done] Fold=2 Bridge          None         AP=0.22678 AUROC=0.66741 F1=0.28492
+[Done] Fold=2 Bridge          ClassWeight2 AP=0.22625 AUROC=0.66726 F1=0.28227
+[Done] Fold=2 Bridge          ClassWeight4 AP=0.22662 AUROC=0.66754 F1=0.28400
+[Done] Fold=2 Bridge          SMOTENC      AP=0.21540 AUROC=0.65802 F1=0.28087
+[Done] Fold=2 RandomEncoder   None         AP=0.22702 AUROC=0.66696 F1=0.28511
+[Done] Fold=2 RandomEncoder   ClassWeight2 AP=0.22571 AUROC=0.66640 F1=0.28190
+[Done] Fold=2 RandomEncoder   ClassWeight4 AP=0.22593 AUROC=0.66645 F1=0.28439
+[Done] Fold=2 RandomEncoder   SMOTENC      AP=0.21466 AUROC=0.65730 F1=0.28070
+[Done] Fold=2 CDCPretrained   None         AP=0.22629 AUROC=0.66662 F1=0.28117
+[Done] Fold=2 CDCPretrained   ClassWeight2 AP=0.22568 AUROC=0.66645 F1=0.28528
+[Done] Fold=2 CDCPretrained   ClassWeight4 AP=0.22580 AUROC=0.66700 F1=0.28522
+[Done] Fold=2 CDCPretrained   SMOTENC      AP=0.21681 AUROC=0.65653 F1=0.28021
+
+========== FOLD 3/5 ==========
+[Done] Fold=3 Bridge          None         AP=0.23058 AUROC=0.67813 F1=0.27936
+[Done] Fold=3 Bridge          ClassWeight2 AP=0.22994 AUROC=0.67773 F1=0.28900
+[Done] Fold=3 Bridge          ClassWeight4 AP=0.22582 AUROC=0.67709 F1=0.29064
+[Done] Fold=3 Bridge          SMOTENC      AP=0.22291 AUROC=0.66874 F1=0.28103
+[Done] Fold=3 RandomEncoder   None         AP=0.22942 AUROC=0.67706 F1=0.28007
+[Done] Fold=3 RandomEncoder   ClassWeight2 AP=0.22767 AUROC=0.67691 F1=0.28371
+[Done] Fold=3 RandomEncoder   ClassWeight4 AP=0.22656 AUROC=0.67705 F1=0.28710
+[Done] Fold=3 RandomEncoder   SMOTENC      AP=0.22514 AUROC=0.67103 F1=0.28571
+[Done] Fold=3 CDCPretrained   None         AP=0.22959 AUROC=0.67586 F1=0.28394
+[Done] Fold=3 CDCPretrained   ClassWeight2 AP=0.22849 AUROC=0.67701 F1=0.29323
+[Done] Fold=3 CDCPretrained   ClassWeight4 AP=0.22495 AUROC=0.67600 F1=0.29136
+[Done] Fold=3 CDCPretrained   SMOTENC      AP=0.22276 AUROC=0.66852 F1=0.27473
+
+========== FOLD 4/5 ==========
+[Done] Fold=4 Bridge          None         AP=0.23498 AUROC=0.67339 F1=0.28859
+[Done] Fold=4 Bridge          ClassWeight2 AP=0.23534 AUROC=0.67484 F1=0.29149
+[Done] Fold=4 Bridge          ClassWeight4 AP=0.23688 AUROC=0.67490 F1=0.29379
+[Done] Fold=4 Bridge          SMOTENC      AP=0.22270 AUROC=0.66758 F1=0.28312
+[Done] Fold=4 RandomEncoder   None         AP=0.23540 AUROC=0.67426 F1=0.28513
+[Done] Fold=4 RandomEncoder   ClassWeight2 AP=0.23742 AUROC=0.67532 F1=0.28847
+[Done] Fold=4 RandomEncoder   ClassWeight4 AP=0.23491 AUROC=0.67507 F1=0.28623
+[Done] Fold=4 RandomEncoder   SMOTENC      AP=0.22652 AUROC=0.66895 F1=0.27924
+[Done] Fold=4 CDCPretrained   None         AP=0.23604 AUROC=0.67455 F1=0.29009
+[Done] Fold=4 CDCPretrained   ClassWeight2 AP=0.23508 AUROC=0.67529 F1=0.29386
+[Done] Fold=4 CDCPretrained   ClassWeight4 AP=0.23548 AUROC=0.67558 F1=0.29081
+[Done] Fold=4 CDCPretrained   SMOTENC      AP=0.22145 AUROC=0.66665 F1=0.27783
+
+========== FOLD 5/5 ==========
+[Done] Fold=5 Bridge          None         AP=0.23424 AUROC=0.68092 F1=0.29003
+[Done] Fold=5 Bridge          ClassWeight2 AP=0.23231 AUROC=0.68097 F1=0.28973
+[Done] Fold=5 Bridge          ClassWeight4 AP=0.23079 AUROC=0.68026 F1=0.28915
+[Done] Fold=5 Bridge          SMOTENC      AP=0.21831 AUROC=0.66439 F1=0.28308
+[Done] Fold=5 RandomEncoder   None         AP=0.23289 AUROC=0.68060 F1=0.28571
+[Done] Fold=5 RandomEncoder   ClassWeight2 AP=0.23284 AUROC=0.68032 F1=0.28898
+[Done] Fold=5 RandomEncoder   ClassWeight4 AP=0.23086 AUROC=0.67994 F1=0.28942
+[Done] Fold=5 RandomEncoder   SMOTENC      AP=0.22132 AUROC=0.66668 F1=0.28584
+[Done] Fold=5 CDCPretrained   None         AP=0.23263 AUROC=0.68041 F1=0.28856
+[Done] Fold=5 CDCPretrained   ClassWeight2 AP=0.23327 AUROC=0.68018 F1=0.29007
+[Done] Fold=5 CDCPretrained   ClassWeight4 AP=0.23285 AUROC=0.68029 F1=0.28947
+[Done] Fold=5 CDCPretrained   SMOTENC      AP=0.21864 AUROC=0.66584 F1=0.28277
+
+========== FINAL SUMMARY ==========
+   FeatureSet           IH  AP_mean  AP_std  AUROC_mean  F1_mean  Brier_mean
+       Bridge         None  0.23224 0.00352     0.67626  0.28693     0.09579
+RandomEncoder         None  0.23212 0.00383     0.67629  0.28618     0.09579
+CDCPretrained         None  0.23201 0.00410     0.67597  0.28744     0.09581
+RandomEncoder ClassWeight2  0.23163 0.00485     0.67615  0.28740     0.10331
+       Bridge ClassWeight2  0.23161 0.00362     0.67632  0.28844     0.10334
+CDCPretrained ClassWeight2  0.23149 0.00420     0.67622  0.29107     0.10331
+       Bridge ClassWeight4  0.23053 0.00453     0.67618  0.28934     0.13946
+CDCPretrained ClassWeight4  0.23038 0.00470     0.67605  0.28967     0.13936
+RandomEncoder ClassWeight4  0.23021 0.00390     0.67592  0.28805     0.13940
+RandomEncoder      SMOTENC  0.22296 0.00516     0.66696  0.28340     0.09654
+       Bridge      SMOTENC  0.22120 0.00440     0.66572  0.28277     0.09663
+CDCPretrained      SMOTENC  0.22070 0.00291     0.66487  0.27935     0.09673
+
+========== PAIRED COMPARISONS ==========
+                   Comparison           IH  MeanDeltaAP  StdDeltaAP  PositiveFolds
+       RandomEncoder - Bridge         None     -0.00012     0.00110              3
+       RandomEncoder - Bridge ClassWeight2      0.00003     0.00160              3
+       RandomEncoder - Bridge ClassWeight4     -0.00032     0.00106              3
+       RandomEncoder - Bridge      SMOTENC      0.00176     0.00187              4
+       CDCPretrained - Bridge         None     -0.00023     0.00117              2
+       CDCPretrained - Bridge ClassWeight2     -0.00012     0.00099              2
+       CDCPretrained - Bridge ClassWeight4     -0.00015     0.00138              2
+       CDCPretrained - Bridge      SMOTENC     -0.00051     0.00164              2
+CDCPretrained - RandomEncoder         None     -0.00011     0.00053              2
+CDCPretrained - RandomEncoder ClassWeight2     -0.00015     0.00127              3
+CDCPretrained - RandomEncoder ClassWeight4      0.00017     0.00130              3
+CDCPretrained - RandomEncoder      SMOTENC     -0.00227     0.00268              1
+
+========== FINISHED ==========
+/media/synology/G/314554044/cdc_encoder_control_results

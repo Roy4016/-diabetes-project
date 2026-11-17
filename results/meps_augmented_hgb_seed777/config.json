@@ -1,0 +1,12 @@
+{
+  "hospital": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+  "meps": "/media/synology/G/314554044/diabetes_project/data/processed/meps/meps_diabetes_bridge8.csv",
+  "reference_oof": "results/meps_nested_hgb_blend_seed777/oof_all.csv",
+  "outdir": "results/meps_augmented_hgb_seed777",
+  "folds": 5,
+  "seed": 777,
+  "min_frequency": 100,
+  "domain_weight_min": 0.1,
+  "domain_weight_max": 10.0,
+  "bootstrap": 2000
+}

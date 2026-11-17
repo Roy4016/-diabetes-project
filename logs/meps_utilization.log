@@ -1,0 +1,96 @@
+[Hospital] Samples: 99,343
+[Hospital] Unique patients: 69990
+[Hospital] Readmission prevalence: 0.1139
+[Clinical] Created 24 features
+[Hospital] Rows=99,343, patients=69,990
+[MEPS] Rows=12,449, Patients=7,991
+[MEPS] ER prevalence=0.2184; IP prevalence=0.1657
+
+========== BRIDGE DIAGNOSTICS ==========
+bridge_age              MEPS mean=59.3708 Hospital mean=65.7443
+bridge_sex              MEPS mean=0.4520 Hospital mean=0.4619
+bridge_high_bp          MEPS mean=0.7652 Hospital mean=0.1968
+bridge_high_chol        MEPS mean=0.7023 Hospital mean=0.0240
+bridge_stroke           MEPS mean=0.1177 Hospital mean=0.0537
+bridge_heart_disease    MEPS mean=0.1867 Hospital mean=0.1632
+
+========== EXTERNAL MEPS VALIDATION ==========
+/home/synology/anaconda3/envs/diabetes/lib/python3.11/site-packages/xgboost/core.py:751: UserWarning: [04:16:20] WARNING: /__w/xgboost/xgboost/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)
+[MEPS] MEPS_ER_2     AP=0.24022 AUROC=0.53335
+[MEPS] MEPS_IP_2     AP=0.20786 AUROC=0.57202
+[MEPS] MEPS_ER_6     AP=0.31386 AUROC=0.61917
+[MEPS] MEPS_IP_6     AP=0.25923 AUROC=0.64622
+
+========== HOSPITAL FOLD 1/5 ==========
+[Done] Fold=1 Clinical           AP=0.23813 AUROC=0.68355 F1=0.29374
+[Done] Fold=1 MEPS_ER_2          AP=0.23859 AUROC=0.68427 F1=0.29508
+[Done] Fold=1 MEPS_IP_2          AP=0.23779 AUROC=0.68449 F1=0.29278
+[Done] Fold=1 MEPS_Both_2        AP=0.23868 AUROC=0.68294 F1=0.29230
+[Done] Fold=1 MEPS_ER_6          AP=0.23954 AUROC=0.68438 F1=0.29539
+[Done] Fold=1 MEPS_IP_6          AP=0.23834 AUROC=0.68419 F1=0.29473
+[Done] Fold=1 MEPS_Both_6        AP=0.23761 AUROC=0.68304 F1=0.29158
+
+========== HOSPITAL FOLD 2/5 ==========
+[Done] Fold=2 Clinical           AP=0.23263 AUROC=0.66708 F1=0.28160
+[Done] Fold=2 MEPS_ER_2          AP=0.23145 AUROC=0.66639 F1=0.27726
+[Done] Fold=2 MEPS_IP_2          AP=0.23091 AUROC=0.66596 F1=0.27843
+[Done] Fold=2 MEPS_Both_2        AP=0.23208 AUROC=0.66702 F1=0.27964
+[Done] Fold=2 MEPS_ER_6          AP=0.23065 AUROC=0.66701 F1=0.27931
+[Done] Fold=2 MEPS_IP_6          AP=0.23151 AUROC=0.66637 F1=0.28097
+[Done] Fold=2 MEPS_Both_6        AP=0.23038 AUROC=0.66662 F1=0.27911
+
+========== HOSPITAL FOLD 3/5 ==========
+[Done] Fold=3 Clinical           AP=0.23263 AUROC=0.67882 F1=0.29123
+[Done] Fold=3 MEPS_ER_2          AP=0.23217 AUROC=0.67838 F1=0.28857
+[Done] Fold=3 MEPS_IP_2          AP=0.23248 AUROC=0.67786 F1=0.28971
+[Done] Fold=3 MEPS_Both_2        AP=0.23222 AUROC=0.67886 F1=0.28703
+[Done] Fold=3 MEPS_ER_6          AP=0.23189 AUROC=0.67789 F1=0.28876
+[Done] Fold=3 MEPS_IP_6          AP=0.23142 AUROC=0.67808 F1=0.29052
+[Done] Fold=3 MEPS_Both_6        AP=0.23233 AUROC=0.67893 F1=0.29034
+
+========== HOSPITAL FOLD 4/5 ==========
+[Done] Fold=4 Clinical           AP=0.23726 AUROC=0.67900 F1=0.29513
+[Done] Fold=4 MEPS_ER_2          AP=0.23576 AUROC=0.68005 F1=0.29465
+[Done] Fold=4 MEPS_IP_2          AP=0.23515 AUROC=0.67950 F1=0.29178
+[Done] Fold=4 MEPS_Both_2        AP=0.23743 AUROC=0.67931 F1=0.29234
+[Done] Fold=4 MEPS_ER_6          AP=0.23631 AUROC=0.67999 F1=0.28435
+[Done] Fold=4 MEPS_IP_6          AP=0.23605 AUROC=0.67907 F1=0.28384
+[Done] Fold=4 MEPS_Both_6        AP=0.23658 AUROC=0.67868 F1=0.29420
+
+========== HOSPITAL FOLD 5/5 ==========
+[Done] Fold=5 Clinical           AP=0.23394 AUROC=0.68295 F1=0.29121
+[Done] Fold=5 MEPS_ER_2          AP=0.23339 AUROC=0.68320 F1=0.29016
+[Done] Fold=5 MEPS_IP_2          AP=0.23529 AUROC=0.68351 F1=0.29261
+[Done] Fold=5 MEPS_Both_2        AP=0.23450 AUROC=0.68321 F1=0.29127
+[Done] Fold=5 MEPS_ER_6          AP=0.23376 AUROC=0.68318 F1=0.29059
+[Done] Fold=5 MEPS_IP_6          AP=0.23396 AUROC=0.68296 F1=0.29071
+[Done] Fold=5 MEPS_Both_6        AP=0.23410 AUROC=0.68247 F1=0.29161
+
+========== FINAL 5-FOLD SUMMARY ==========
+ Experiment  AP_mean   AP_std  AUROC_mean  AUROC_std  F1_mean   F1_std  Brier_mean  Brier_std
+   Clinical 0.234919 0.002609    0.678280   0.006630 0.290581 0.005296    0.095664   0.000193
+  MEPS_ER_2 0.234271 0.002916    0.678457   0.007151 0.289144 0.007211    0.095685   0.000218
+  MEPS_IP_2 0.234324 0.002680    0.678265   0.007406 0.289059 0.006068    0.095680   0.000225
+MEPS_Both_2 0.234983 0.002998    0.678269   0.006599 0.288516 0.005422    0.095661   0.000212
+  MEPS_ER_6 0.234431 0.003564    0.678490   0.006911 0.287681 0.006131    0.095670   0.000241
+  MEPS_IP_6 0.234257 0.002980    0.678135   0.007058 0.288154 0.005604    0.095686   0.000218
+MEPS_Both_6 0.234199 0.002976    0.677947   0.006636 0.289370 0.005907    0.095681   0.000206
+
+========== MEPS VS CLINICAL ==========
+            Comparison  MeanDeltaAP  StdDeltaAP  PositiveFolds  PooledOOF_DeltaAP
+  MEPS_ER_2 - Clinical    -0.000648    0.000756              1          -0.000659
+  MEPS_IP_2 - Clinical    -0.000595    0.001383              1          -0.000479
+MEPS_Both_2 - Clinical     0.000064    0.000526              3          -0.000006
+  MEPS_ER_6 - Clinical    -0.000488    0.001244              1          -0.000328
+  MEPS_IP_6 - Clinical    -0.000662    0.000712              2          -0.000660
+MEPS_Both_6 - Clinical    -0.000720    0.000915              1          -0.000634
+
+========== FINISHED ==========
+Saved: /media/synology/G/314554044/meps_utilization_results
