@@ -1,0 +1,39 @@
+{
+  "models": [
+    "bhuvan_hgb",
+    "roy_hgb_46",
+    "ccs_only_hgb",
+    "ccs_meps_group_hgb",
+    "catboost_family",
+    "catboost_raw",
+    "bhuvan_hgb_catboost_50",
+    "ccs_only_catboost_50",
+    "ccs_meps_catboost_50",
+    "ccs_only_catboost_raw_50",
+    "ccs_meps_catboost_raw_50",
+    "ccs_meps_refit_hgb"
+  ],
+  "completed_folds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "partial_run": false,
+  "catboost_version": "1.2.8",
+  "sklearn_version": "1.8.0",
+  "threshold_policy": "top 10% per outer fold, no test labels used",
+  "catboost_selection": "within each outer train: patient-disjoint validation, max AP then min Brier",
+  "shap_scale": "CatBoost exact TreeSHAP, raw log-odds; global mean absolute magnitude",
+  "our_hgb_shap": "TreeSHAP on a fold-specific refit; one-hot contributions summed to source fields",
+  "our_hgb_refit_max_probability_difference_by_fold": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.0
+  },
+  "patient_bootstrap_replicates": 2000,
+  "historical_0_237_comparison": "Different Rajpoot 80/20 holdout; report descriptively, not as matched SOTA win"
+}

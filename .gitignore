@@ -18,6 +18,16 @@
 !/results/*/metrics.csv
 !/results/*/domain_results.csv
 !/results/*/experiment_results.csv
+!/results/*/fold_metrics.csv
+!/results/*/shap_global.csv
+!/results/*/shap_fold.csv
+!/results/*/catboost_inner_trials.csv
+!/results/*/paired_ap_bootstrap.csv
+!/results/*/audit.json
+!/results/*/run.json
+!/results/*/external_sources.csv
+!/results/*/external_training.csv
+!/results/*/training.csv
 
 # Local Python environments and generated files
 __pycache__/

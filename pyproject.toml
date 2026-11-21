@@ -19,6 +19,8 @@ dependencies = [
 [project.optional-dependencies]
 xgboost = ["xgboost"]
 tabpfn = ["tabpfn>=10.1,<11"]
+comparison = ["catboost==1.2.8", "shap>=0.48", "xgboost>=2"]
+dual_external = ["torch>=2", "xgboost>=2"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -1,0 +1,42 @@
+{
+  "hospital": "/media/synology/G/314554044/diabetes_project/data/raw/uci/diabetic_data.csv",
+  "meps": "/media/synology/G/314554044/diabetes_project/data/processed/meps_2008_2024/meps_diabetes_bridge8.csv",
+  "nhanes": "/media/synology/G/314554044/diabetes_project/data/processed/nhanes/diabetes_hospitalization_2015_2018.csv",
+  "ccs_file": "/media/synology/G/314554044/diabetes_project/data/raw/ahrq/Single_Level_CCS_2015.zip",
+  "reference_oof": "/media/synology/G/314554044/diabetes_project/results/meps_event_ccs_group_hgb_seed777/oof_all.csv",
+  "selected_hgb": "/media/synology/G/314554044/diabetes_project/results/meps_event_ccs_group_hgb_seed777/selected_hgb.csv",
+  "catboost_oof": "/media/synology/G/314554044/diabetes_project/results/paper_fair_comparison_seed777/oof_all.csv.gz",
+  "outdir": "results/meps_nhanes_dual_external_seed777",
+  "methods": [
+    "grouping",
+    "multitask"
+  ],
+  "max_folds": 5,
+  "seed": 777,
+  "min_frequency": 100,
+  "group_alpha": 50,
+  "epochs": 30,
+  "batch_size": 512,
+  "torch_threads": 4,
+  "alert_fraction": 0.1,
+  "bootstrap": 500,
+  "completed_folds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "baseline_refit_max_abs_difference": {
+    "1": 0.0
+  },
+  "external_label_semantics": {
+    "MEPS": "next-year ER and inpatient utilization from consecutive annual pairs",
+    "NHANES": "past-year hospitalization among diabetic respondents",
+    "UCI": "30-day hospital readmission"
+  },
+  "selection": "CCS-only HGB parameters selected inside each original outer train fold; fixed for every new variant; no outer test label tuning",
+  "grouping": "source-specific age/sex/race hierarchical smoothed rates; dual combines source-specific logit lifts, not raw labels",
+  "multitask": "external-only shared demographic encoder with separate MEPS ER/IP and NHANES hospitalization heads",
+  "blend": "fixed 50/50 mean of each HGB and the audited CatBoost raw-ICD OOF"
+}

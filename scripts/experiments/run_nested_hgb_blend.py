@@ -44,7 +44,7 @@ def feature_columns(frame, use_meps):
     return columns
 
 
-def encode_frames(train, validation, test, columns, min_frequency):
+def encode_frames(train, validation, test, columns, min_frequency, return_transformer=False):
     categorical_ids = {"admission_type_id", "discharge_disposition_id", "admission_source_id"}
     categorical, numeric = [], []
     normalized = []
@@ -71,6 +71,8 @@ def encode_frames(train, validation, test, columns, min_frequency):
     train_x = transformer.fit_transform(normalized[0]).astype(np.float32, copy=False)
     val_x = transformer.transform(normalized[1]).astype(np.float32, copy=False)
     test_x = transformer.transform(normalized[2]).astype(np.float32, copy=False)
+    if return_transformer:
+        return train_x, val_x, test_x, transformer
     return train_x, val_x, test_x
 
 

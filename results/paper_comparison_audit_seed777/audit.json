@@ -1,0 +1,18 @@
+{
+  "cohort_rows": 99343,
+  "patients": 69990,
+  "positive_rate": 0.11388824577474005,
+  "fold_rows": {
+    "1": 19869,
+    "2": 19869,
+    "3": 19868,
+    "4": 19869,
+    "5": 19868
+  },
+  "split_match": "exact encounter, patient, label and fold equality across both OOF files",
+  "source_sha256": "0689e7ec031237dc63031b938805c48377748761a3b26acab621567afa24df97",
+  "our_oof_sha256": "e5ac0625fb4b5a7ae6fb03512594bb44f9ca84d9d99139e763f1a853719b6515",
+  "bhuvan_oof_sha256": "da677f1bd067c9a8d84a6d9a5195f8be4fca05d04de85b8755af085a4e99995e",
+  "salim_result_status": "80/20 holdout only; SHAP/metrics extension of Rajpoot, not a five-fold Salim model",
+  "historical_catboost_status": "80/20 holdout only; 0.251383 AP cannot be ranked against five-fold mean AP"
+}
