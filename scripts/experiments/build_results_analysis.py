@@ -282,6 +282,71 @@ SHAP 只針對上述已保存解釋檔的模型分析；其他表格中的模型
 """
 
 
+def three_external_section():
+    """Summarize the completed CMS + MEPS + CDC experiment from saved results."""
+    folder = RESULTS / "cms_meps_cdc_catboost_seed777"
+    summary = pd.read_csv(folder / "summary.csv")
+    bootstrap = pd.read_csv(folder / "paired_ap_bootstrap.csv")
+    shap = pd.read_csv(folder / "shap_global.csv")
+    thresholds = pd.read_csv(RESULTS / "top_fractions_cms_meps_cdc_5fold_seed777" / "summary.csv")
+    required = {"catboost_raw", "cms_catboost_raw", "ccs_only_hgb_catboost_raw_50", "meps", "cdc",
+                "cms_meps", "cms_cdc", "meps_cdc", "cms_meps_cdc", "cms_meps_cdc_hgb50"}
+    if not required.issubset(set(summary.Model)) or not summary.Folds.eq(5).all():
+        raise ValueError("Three-source experiment lacks complete five-fold metrics")
+    names = ["catboost_raw", "ccs_only_hgb_catboost_raw_50", "cms_catboost_raw", "meps", "cdc",
+             "cms_meps", "cms_cdc", "meps_cdc", "cms_meps_cdc", "cms_meps_cdc_hgb50"]
+    metrics = summary.set_index("Model").loc[names]
+    rows = ["| 模型 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    columns = ["PR_AUC_mean", "AUROC_mean", "Precision_mean", "Recall_mean", "F1_mean", "Brier_mean"]
+    for name, record in metrics.iterrows():
+        rows.append("| `" + name + "` | " + " | ".join(f"{record[col]:.6f}" for col in columns) + " |")
+    comparison = bootstrap.loc[
+        bootstrap.Treatment.eq("cms_meps_cdc_hgb50") &
+        bootstrap.Control.eq("ccs_only_hgb_catboost_raw_50")
+    ]
+    if len(comparison) != 1:
+        raise ValueError("Missing paired bootstrap for three-source ensemble")
+    paired = comparison.iloc[0]
+    external_names = ["meps_ccs_revisit_mean", "meps_ccs_readmit_max", "meps_ccs_revisit_max",
+                      "meps_ccs_readmit_mean", "cdc_poor_health", "cms_readmission_rate", "cms_mapped"]
+    selected = shap.set_index("Feature").loc[external_names]
+    if not selected.Explained_Rows.eq(5000).all():
+        raise ValueError("Three-source SHAP explanation sample changed")
+    shap_rows = ["| 外部特徵 | 平均絕對 SHAP（log-odds） | 排名 |",
+                 "| --- | ---: | ---: |"]
+    for feature, record in selected.iterrows():
+        shap_rows.append(f"| `{feature}` | {record.MeanAbsSHAP_logodds:.6f} | {int(record.Rank)} |")
+    target = thresholds.loc[thresholds.Model.isin(["ccs_only_catboost_raw_50", "cms_meps_cdc_hgb50"])]
+    f1 = target.pivot(index="Top_Percent", columns="Model", values="F1")
+    if set(f1.index) != {5., 10., 15., 20., 25.}:
+        raise ValueError("Three-source alert-budget results incomplete")
+    budget_rows = ["| 每折警示比例 | 無外部資料融合 F1 | 三來源融合 F1 |",
+                   "| --- | ---: | ---: |"]
+    for fraction, values in f1.sort_index().iterrows():
+        budget_rows.append(f"| Top {fraction:g}% | {values['ccs_only_catboost_raw_50']:.6f} | "
+                           f"{values['cms_meps_cdc_hgb50']:.6f} |")
+    return f"""## CDC＋MEPS＋CMS 三來源聯合實驗
+
+這組已完成 **99,343 筆、69,990 位病人、seed 777、相同病人互斥五折**。所有模型的 Precision、Recall、F1 都固定取每折風險最高 10%；其餘三項使用原始預測機率。單一及雙來源列使用同一 Raw ICD-9 CatBoost 架構做配對控制；`cms_meps_cdc_hgb50` 再與 CCS-only HGB 的機率固定 50/50 融合。下表中的 `ccs_only_hgb_catboost_raw_50` 與前文 `ccs_only_catboost_raw_50` 是同一基線預測。[完整六項指標](results/cms_meps_cdc_catboost_seed777/summary.csv)｜[逐折指標](results/cms_meps_cdc_catboost_seed777/fold_metrics.csv)｜[實驗稽核](results/cms_meps_cdc_catboost_seed777/audit.json)。
+
+{chr(10).join(rows)}
+
+三來源融合相對無外部資料的 CCS HGB＋Raw CatBoost，平均 **ΔAP {paired.MeanFold_Delta_PR_AUC:+.6f}**；每折內按病人配對抽樣 2,000 次的 95% CI 為 **[{paired.CI95_Lower:+.6f}, {paired.CI95_Upper:+.6f}]**。Top 10% 的 F1 從 **{metrics.loc['ccs_only_hgb_catboost_raw_50','F1_mean']:.6f}** 到 **{metrics.loc['cms_meps_cdc_hgb50','F1_mean']:.6f}**，但 AP 較低且配對 CI 跨零，不能宣稱三來源聯合提高主要 PR-AUC。其他配對差值見[完整 bootstrap](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+
+CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它本身不是再住院標籤；MEPS 使用精確日期事件的 CCS 群組 30 天再就醫／再住院統計；CMS 使用四類疾病的全國彙總再住院率，約覆蓋醫院隊列 16.5%。這些欄位以共同人口或診斷資訊對齊；不同資料來源的測量方式與涵蓋範圍，可能限制外部訊號的效益，但本實驗不能判定因果原因。
+
+聯合 CatBoost 的五折 SHAP 每折抽 1,000 筆，共 5,000 筆。原始醫院特徵 `number_inpatient`、`discharge_disposition_id`、`diag_1` 仍排前三；外部特徵如下。[完整 SHAP 排名](results/cms_meps_cdc_catboost_seed777/shap_global.csv)｜[各折 SHAP](results/cms_meps_cdc_catboost_seed777/shap_fold.csv)。SHAP 表示模型使用了特徵，不能單靠它證明外部資料增加預測效益。
+
+{chr(10).join(shap_rows)}
+
+同一組 OOF 的固定警示比例敏感度分析如下；**PR-AUC、AUROC、Brier 不隨警示比例改變**。三來源融合在 Top 5% 與 10% 的 F1 略高，Top 15%～25% 則沒有此優勢。[全部模型與比例的六項指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)。
+
+{chr(10).join(budget_rows)}
+
+"""
+
+
 def main():
     inventory, skipped, duplicates = inventory_oof()
     cdc = summary_only_cdc()
@@ -410,7 +475,7 @@ def main():
         )
         current = current.replace(
             "## 研究協定與可重用資料",
-            "主要輸出：[六項指標](results/final_presentation_completion/final_experiment_metrics.csv)、[消融指標](results/final_presentation_completion/final_ablation_metrics.csv)、[配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)、[CMS coverage](results/final_presentation_completion/cms_coverage_analysis.csv)、[OOF 稽核](results/final_presentation_completion/source_audit.csv)。\n\n## 研究協定與可重用資料",
+            "主要輸出：[六項指標](results/final_presentation_completion/final_experiment_metrics.csv)、[消融指標](results/final_presentation_completion/final_ablation_metrics.csv)、[配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)、[CMS coverage](results/final_presentation_completion/cms_coverage_analysis.csv)、[CDC＋MEPS＋CMS 聯合結果](results/cms_meps_cdc_catboost_seed777/summary.csv)、[OOF 稽核](results/final_presentation_completion/source_audit.csv)。\n\n## 研究協定與可重用資料",
             1,
         )
         external_path = RESULTS / "final_presentation_completion" / "external_data_comparisons.csv"
@@ -431,6 +496,10 @@ def main():
             "另含兩者的六項數值與對齊方式。\n\n" + paired_table + "\n\n### 資料來源、對齊方式與限制\n\n",
             1,
         )
+        marker = "## CatBoost 原始特徵消融"
+        if marker not in current:
+            raise ValueError("Final presentation report changed; cannot insert three-source results")
+        current = current.replace(marker, three_external_section() + marker, 1)
         current += "\n# 延伸實驗與歷史紀錄\n\n以下保留先前已完成的其他五折方法，包括 NHANES、不同 seed 與 99,340 筆舊隊列。這些結果供方法歷程查閱；不同隊列、切分或門檻策略不得與前述正式主表直接排名。重複的核心模型以最前方的最新 OOF 重算表為準。\n\n"
         destination.write_text(current + historical, encoding="utf-8")
     else:

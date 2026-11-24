@@ -4,7 +4,7 @@
 
 產生方式：先執行 `python scripts/experiments/complete_final_presentation.py --bootstrap 2000`，再執行 `python scripts/experiments/build_results_analysis.py` 整合歷史附錄。前半部正式主表只依據已核對的實際 OOF 和原始資料生成；不使用早期單次 holdout、99,340 筆隊列或其他 seed。
 
-主要輸出：[六項指標](results/final_presentation_completion/final_experiment_metrics.csv)、[消融指標](results/final_presentation_completion/final_ablation_metrics.csv)、[配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)、[CMS coverage](results/final_presentation_completion/cms_coverage_analysis.csv)、[OOF 稽核](results/final_presentation_completion/source_audit.csv)。
+主要輸出：[六項指標](results/final_presentation_completion/final_experiment_metrics.csv)、[消融指標](results/final_presentation_completion/final_ablation_metrics.csv)、[配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)、[CMS coverage](results/final_presentation_completion/cms_coverage_analysis.csv)、[CDC＋MEPS＋CMS 聯合結果](results/cms_meps_cdc_catboost_seed777/summary.csv)、[OOF 稽核](results/final_presentation_completion/source_audit.csv)。
 
 ## 研究協定與可重用資料
 
@@ -56,6 +56,49 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 | uci_only_nn | 0.216620 | 0.664481 | 0.263243 | 0.231040 | 0.246093 | 0.097245 |
 | joint_meps_30d | 0.219264 | 0.665757 | 0.263746 | 0.231482 | 0.246563 | 0.097049 |
 | joint_meps_30d_catboost50 | 0.239537 | 0.680805 | 0.283686 | 0.248983 | 0.265204 | 0.095406 |
+
+## CDC＋MEPS＋CMS 三來源聯合實驗
+
+這組已完成 **99,343 筆、69,990 位病人、seed 777、相同病人互斥五折**。所有模型的 Precision、Recall、F1 都固定取每折風險最高 10%；其餘三項使用原始預測機率。單一及雙來源列使用同一 Raw ICD-9 CatBoost 架構做配對控制；`cms_meps_cdc_hgb50` 再與 CCS-only HGB 的機率固定 50/50 融合。下表中的 `ccs_only_hgb_catboost_raw_50` 與前文 `ccs_only_catboost_raw_50` 是同一基線預測。[完整六項指標](results/cms_meps_cdc_catboost_seed777/summary.csv)｜[逐折指標](results/cms_meps_cdc_catboost_seed777/fold_metrics.csv)｜[實驗稽核](results/cms_meps_cdc_catboost_seed777/audit.json)。
+
+| 模型 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `catboost_raw` | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
+| `ccs_only_hgb_catboost_raw_50` | 0.247374 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 |
+| `cms_catboost_raw` | 0.246507 | 0.682518 | 0.286103 | 0.251103 | 0.267463 | 0.095083 |
+| `meps` | 0.246960 | 0.683091 | 0.287815 | 0.252605 | 0.269063 | 0.095054 |
+| `cdc` | 0.246266 | 0.682434 | 0.284693 | 0.249865 | 0.266144 | 0.095104 |
+| `cms_meps` | 0.246276 | 0.682878 | 0.286808 | 0.251722 | 0.268122 | 0.095085 |
+| `cms_cdc` | 0.246211 | 0.682839 | 0.284592 | 0.249777 | 0.266051 | 0.095086 |
+| `meps_cdc` | 0.247036 | 0.683011 | 0.288218 | 0.252959 | 0.269440 | 0.095057 |
+| `cms_meps_cdc` | 0.246367 | 0.683025 | 0.287613 | 0.252429 | 0.268875 | 0.095080 |
+| `cms_meps_cdc_hgb50` | 0.247091 | 0.683464 | 0.291138 | 0.255522 | 0.272170 | 0.095073 |
+
+三來源融合相對無外部資料的 CCS HGB＋Raw CatBoost，平均 **ΔAP -0.000283**；每折內按病人配對抽樣 2,000 次的 95% CI 為 **[-0.000993, +0.000543]**。Top 10% 的 F1 從 **0.269817** 到 **0.272170**，但 AP 較低且配對 CI 跨零，不能宣稱三來源聯合提高主要 PR-AUC。其他配對差值見[完整 bootstrap](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+
+CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它本身不是再住院標籤；MEPS 使用精確日期事件的 CCS 群組 30 天再就醫／再住院統計；CMS 使用四類疾病的全國彙總再住院率，約覆蓋醫院隊列 16.5%。這些欄位以共同人口或診斷資訊對齊；不同資料來源的測量方式與涵蓋範圍，可能限制外部訊號的效益，但本實驗不能判定因果原因。
+
+聯合 CatBoost 的五折 SHAP 每折抽 1,000 筆，共 5,000 筆。原始醫院特徵 `number_inpatient`、`discharge_disposition_id`、`diag_1` 仍排前三；外部特徵如下。[完整 SHAP 排名](results/cms_meps_cdc_catboost_seed777/shap_global.csv)｜[各折 SHAP](results/cms_meps_cdc_catboost_seed777/shap_fold.csv)。SHAP 表示模型使用了特徵，不能單靠它證明外部資料增加預測效益。
+
+| 外部特徵 | 平均絕對 SHAP（log-odds） | 排名 |
+| --- | ---: | ---: |
+| `meps_ccs_revisit_mean` | 0.019719 | 15 |
+| `meps_ccs_readmit_max` | 0.012726 | 20 |
+| `meps_ccs_revisit_max` | 0.010789 | 22 |
+| `meps_ccs_readmit_mean` | 0.010704 | 23 |
+| `cdc_poor_health` | 0.007321 | 24 |
+| `cms_readmission_rate` | 0.003490 | 35 |
+| `cms_mapped` | 0.000835 | 44 |
+
+同一組 OOF 的固定警示比例敏感度分析如下；**PR-AUC、AUROC、Brier 不隨警示比例改變**。三來源融合在 Top 5% 與 10% 的 F1 略高，Top 15%～25% 則沒有此優勢。[全部模型與比例的六項指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)。
+
+| 每折警示比例 | 無外部資料融合 F1 | 三來源融合 F1 |
+| --- | ---: | ---: |
+| Top 5% | 0.216475 | 0.218440 |
+| Top 10% | 0.269817 | 0.272170 |
+| Top 15% | 0.289692 | 0.288166 |
+| Top 20% | 0.293723 | 0.293466 |
+| Top 25% | 0.293950 | 0.293728 |
 
 ## CatBoost 原始特徵消融
 
