@@ -29,7 +29,7 @@
 
 ## 近期完整五折比較
 
-以下沿用 **99,343 次就醫／69,990 位病人、seed 777、相同 patient-disjoint 五折**。六項指標皆為五個測試折的算術平均；Precision、Recall、F1 固定取每折風險最高 **10%**。PR-AUC 使用 `average_precision_score`。這裡的 Rajpoot HGB 是在本專題五折上重跑的復現，與原論文單次 holdout AP 0.237 不能直接排名。完整模型表見[正式五折指標](results/final_presentation_completion/final_experiment_metrics.csv)，方法與結果解讀見[實驗結果總報告](RESULTS_ANALYSIS.md)。
+以下沿用 **99,343 次就醫／69,990 位病人、seed 777、相同 patient-disjoint 五折**。六項指標皆為五個測試折的算術平均；Precision、Recall、F1 固定取每折風險最高 **10%**。PR-AUC 使用 `average_precision_score`。表內各欄最佳數值以粗體標示（Brier 越低越好）；粗體不代表模型間差異具統計顯著性。這裡的 Rajpoot HGB 是在本專題五折上重跑的復現，與原論文單次 holdout AP 0.237 不能直接排名。完整模型表見[正式五折指標](results/final_presentation_completion/final_experiment_metrics.csv)，方法與結果解讀見[實驗結果總報告](RESULTS_ANALYSIS.md)。
 
 | 方法 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
 |---|---:|---:|---:|---:|---:|---:|
@@ -38,12 +38,12 @@
 | 原始 HGB＋Raw CatBoost 50/50 | 0.246225 | 0.682744 | 0.287412 | 0.252253 | 0.268687 | 0.095119 |
 | CCS-only HGB | 0.239179 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 |
 | Raw ICD-9 CatBoost | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
-| **CCS HGB＋Raw CatBoost 50/50** | **0.247374** | **0.683446** | 0.288620 | 0.253313 | 0.269817 | **0.095068** |
+| **CCS HGB＋Raw CatBoost 50/50** | **0.247374** | 0.683446 | 0.288620 | 0.253313 | 0.269817 | **0.095068** |
 | MEPS event-CCS HGB＋Raw CatBoost | 0.247139 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 |
 | CMS HGB＋Raw CatBoost | 0.246741 | 0.683289 | 0.287714 | 0.252517 | 0.268969 | 0.095083 |
 | CCS HGB＋CMS CatBoost | 0.247074 | 0.683315 | 0.289225 | 0.253844 | 0.270382 | 0.095072 |
 | CDC＋MEPS＋CMS CatBoost | 0.246367 | 0.683025 | 0.287613 | 0.252429 | 0.268875 | 0.095080 |
-| CDC＋MEPS＋CMS CatBoost＋CCS HGB 50/50 | 0.247091 | 0.683464 | 0.291138 | 0.255522 | 0.272170 | 0.095073 |
+| CDC＋MEPS＋CMS CatBoost＋CCS HGB 50/50 | 0.247091 | **0.683464** | **0.291138** | **0.255522** | **0.272170** | 0.095073 |
 
 最後兩列來自[三來源聯合實驗](results/cms_meps_cdc_catboost_seed777/summary.csv)：CDC 是糖尿病受訪者自評健康代理分數，MEPS 是精確日期的事件 CCS 30 天再就醫／再住院群組統計，CMS 是四類疾病全國彙總率。三來源融合相對 CCS HGB＋Raw CatBoost 的 **ΔAP −0.000283**、病人分折 bootstrap 95% CI **[-0.000993, +0.000543]**。不能因 Top 10% 的 F1 略高，就宣稱 AP 有改善。[完整配對比較](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
 
