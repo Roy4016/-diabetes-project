@@ -8,6 +8,7 @@
 
 - **同一組 seed 777、五折 patient-disjoint 評估的最高平均 AP 是 CCS-only HGB＋原始 ICD-9 CatBoost 的 0.247374**；舊 HGB 家族最高為 CCS-only HGB 的 0.239179。[新同切分比較](results/paper_fair_comparison_seed777/summary.csv)｜[舊 HGB 每折結果](results/meps_ccs_group_hgb_seed777/fold_results.csv)
 - **有使用外部病人資料的最高同組平均 AP 約 0.247140**，由 MEPS event-CCS HGB＋CatBoost 達成。它比相同 CatBoost 的 CCS-only 融合低約 0.0002，配對病人 bootstrap CI 跨零；尚無 MEPS 額外提升 AP 的證據。[結果](results/paper_fair_comparison_seed777/summary.csv)｜[配對比較](results/paper_fair_comparison_seed777/paired_ap_bootstrap.csv)
+- **CDC＋MEPS＋CMS 聯合 CatBoost** 的五折平均 AP 是 0.246367，與 CCS-only HGB 固定 50/50 融合是 0.247091；後者比沒有外部資料的同架構融合 **0.247374** 低 0.000283，配對 bootstrap 95% CI **[-0.000993, +0.000543]**。外部特徵有進入模型，但目前沒有證據顯示三來源聯合能提高整體 AP。[六項指標](results/cms_meps_cdc_catboost_seed777/summary.csv)｜[配對分析](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)｜[SHAP](results/cms_meps_cdc_catboost_seed777/shap_global.csv)
 - 跨三個 seed 的 HGB＋XGBoost 機率平均實驗中，**有 MEPS** 的 pooled OOF AP 為 0.238312，**無外部資料** 為 0.237798，差 +0.000514（病人 bootstrap 95% CI +0.000108 至 +0.000924）。這是不同於上項的「先跨 seed 平均預測，再計算 pooled AP」，不能與五折平均 AP 混排。[結果](results/meps_hgb_xgb_ensemble/summary.csv)｜[配對比較](results/meps_hgb_xgb_ensemble/patient_bootstrap.csv)
 - 使用者提供的 Rajpoot (2026) 圖片報告 **20% held-out test AP 0.237**，樣本為 99,340 encounters／69,987 patients；本專題最新五折資料為 99,343／69,990。多出的三筆恰是 `gender=Unknown/Invalid`，但無法單憑圖片確認對方是否因此排除。**分割與樣本數不同，不能以 0.239179 > 0.237 宣稱公平超越 SOTA。**
 
@@ -18,6 +19,7 @@
 | UCI 糖尿病住院資料 | 主要預測資料；五折流程使用 99,343 筆、69,990 位病人，30 天再住院率約 11.39% | 同一病人不能跨訓練與測試折 |
 | MEPS | **真實外部病人資料**；年度追蹤、住院／急診事件與疾病紀錄 | 2008–2024 年度表有 45,436 person-years、21,176 個連續年度配對；精確事件日期的 30 天標籤目前限 2008–2012 |
 | CDC BRFSS | 真實外部調查資料，用來估計人口群健康風險或訓練編碼器 | 沒有 UCI 的 30 天再住院標籤 |
+| CMS HRRP | 四類疾病的全國彙總 30 天再住院率，依主要診斷 CCS 對齊 UCI | 只覆蓋 16,413／99,343 筆（16.5%），不是患者級外部資料 |
 | NHANES | 真實外部調查資料，1,747 位自述糖尿病受訪者 | 結果是「過去一年曾住院」，不是 30 天再住院 |
 | AHRQ CCS | ICD 診斷的公開分級／對照表 | **不是外部病人 dataset**；CCS-only 不符合「加入外部病人資料」的要求 |
 
@@ -25,7 +27,57 @@
 
 本專題還保留兩套特徵流程：早期較保守的 15 個衍生臨床特徵流程，其 Clinical XGBoost 約 **0.209917**；後期的出院時 46 個原始欄位及延伸臨床特徵流程，Clinical XGBoost 約 **0.234919**。兩套的絕對 AP 不代表同一模型的前後進步。
 
-## 早期固定 holdout：LR、RF、XGBoost、類別不平衡與外部資料
+## 近期完整五折比較
+
+以下沿用 **99,343 次就醫／69,990 位病人、seed 777、相同 patient-disjoint 五折**。六項指標皆為五個測試折的算術平均；Precision、Recall、F1 固定取每折風險最高 **10%**。PR-AUC 使用 `average_precision_score`。這裡的 Rajpoot HGB 是在本專題五折上重跑的復現，與原論文單次 holdout AP 0.237 不能直接排名。完整模型表見[正式五折指標](results/final_presentation_completion/final_experiment_metrics.csv)，方法與結果解讀見[實驗結果總報告](RESULTS_ANALYSIS.md)。
+
+| 方法 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| Rajpoot HGB 復現 | 0.228703 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 |
+| 原始 46 欄 HGB | 0.237261 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 |
+| 原始 HGB＋Raw CatBoost 50/50 | 0.246225 | 0.682744 | 0.287412 | 0.252253 | 0.268687 | 0.095119 |
+| CCS-only HGB | 0.239179 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 |
+| Raw ICD-9 CatBoost | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
+| **CCS HGB＋Raw CatBoost 50/50** | **0.247374** | **0.683446** | 0.288620 | 0.253313 | 0.269817 | **0.095068** |
+| MEPS event-CCS HGB＋Raw CatBoost | 0.247139 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 |
+| CMS HGB＋Raw CatBoost | 0.246741 | 0.683289 | 0.287714 | 0.252517 | 0.268969 | 0.095083 |
+| CCS HGB＋CMS CatBoost | 0.247074 | 0.683315 | 0.289225 | 0.253844 | 0.270382 | 0.095072 |
+| CDC＋MEPS＋CMS CatBoost | 0.246367 | 0.683025 | 0.287613 | 0.252429 | 0.268875 | 0.095080 |
+| CDC＋MEPS＋CMS CatBoost＋CCS HGB 50/50 | 0.247091 | 0.683464 | 0.291138 | 0.255522 | 0.272170 | 0.095073 |
+
+最後兩列來自[三來源聯合實驗](results/cms_meps_cdc_catboost_seed777/summary.csv)：CDC 是糖尿病受訪者自評健康代理分數，MEPS 是精確日期的事件 CCS 30 天再就醫／再住院群組統計，CMS 是四類疾病全國彙總率。三來源融合相對 CCS HGB＋Raw CatBoost 的 **ΔAP −0.000283**、病人分折 bootstrap 95% CI **[-0.000993, +0.000543]**。不能因 Top 10% 的 F1 略高，就宣稱 AP 有改善。[完整配對比較](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+
+### 已完成的五折 LR、RF、XGBoost 與特徵消融
+
+早期 LR／RF／XGBoost 已在同一五折切分重跑。下表與上表採相同 **Top 10%** 規則；完整六指標與其他加權／SMOTENC 比例見[重跑結果](results/classic_5fold_recheck_seed777/summary.csv)。
+
+| 方法 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| LR 標準權重 | 0.212744 | 0.656468 | 0.261128 | 0.229185 | 0.244116 | 0.097284 |
+| RF 標準權重 | 0.222174 | 0.670451 | 0.267976 | 0.235194 | 0.250517 | 0.098313 |
+| XGBoost 標準權重 | 0.230520 | 0.673929 | 0.273817 | 0.240320 | 0.255977 | 0.095958 |
+| XGBoost 類別加權 | 0.221244 | 0.668693 | 0.263041 | 0.230865 | 0.245905 | 0.224077 |
+| XGBoost＋SMOTENC 0.20 | 0.206220 | 0.645952 | 0.244310 | 0.214424 | 0.228394 | 0.097684 |
+
+Raw CatBoost **重新訓練**的消融結果：移除 `number_inpatient` 後 AP **0.220537**（原模型減消融 **+0.025970**，95% CI **[+0.020712, +0.030794]**）；只移除 `diag_1`／`diag_2`／`diag_3` 後 **0.238047**；再移除診斷衍生的 `number_diagnoses` 後 **0.236696**。這與 SHAP 的 `number_inpatient` 排名第一一致，但 SHAP 排名本身不等於消融後的效益。[六項消融指標](results/final_presentation_completion/final_ablation_metrics.csv)｜[病人配對比較](results/final_presentation_completion/final_bootstrap_comparisons.csv)。
+
+### 警示比例與 SHAP
+
+固定取每折最高風險的 **5%、10%、15%、20%、25%**，只重算既有五折 OOF，不重新訓練模型；AP、AUROC、Brier 因此不隨比例改變。[全部模型六指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)｜[相對 Top 10% 變化](results/top_fractions_cms_meps_cdc_5fold_seed777/comparison_vs_top10.csv)。
+
+| 警示比例 | CCS HGB＋Raw CatBoost F1 | CDC＋MEPS＋CMS 融合 F1 |
+|---|---:|---:|
+| Top 5% | 0.216475 | **0.218440** |
+| Top 10% | 0.269817 | **0.272170** |
+| Top 15% | **0.289692** | 0.288166 |
+| Top 20% | **0.293723** | 0.293466 |
+| Top 25% | **0.293950** | 0.293728 |
+
+另外，**Validation-Optimized F1 Threshold** 已對具有完整內層驗證預測的 16 個模型完成五折評估；其 Precision／Recall／F1 與固定 Top 10% 屬不同門檻口徑，不能混在同一表排名。CCS HGB＋Raw CatBoost 在此門檻下 F1 **0.293793**、平均警示比例約 **21.48%**。[完整可評估模型](results/validation_f1_threshold_seed777/summary.csv)｜[各折門檻](results/validation_f1_threshold_seed777/thresholds.csv)。
+
+三來源聯合 CatBoost 的 SHAP 每折取 1,000 筆、共 5,000 筆。前三名依序為 `number_inpatient`（0.239822）、`discharge_disposition_id`（0.144187）、`diag_1`（0.070028）；外部特徵中 `meps_ccs_revisit_mean` 排第 15（0.019719）、`cdc_poor_health` 排第 24（0.007321）、`cms_readmission_rate` 排第 35（0.003490）。這說明模型用到外部特徵，不證明外部資料帶來 AP 增益。[完整 SHAP 排名](results/cms_meps_cdc_catboost_seed777/shap_global.csv)。
+
+## 歷史紀錄：早期固定 holdout
 
 LR、RF、XGBoost 當時使用**相同的單次固定 holdout 分割**，尚未採用五折；這項 LR 分割資訊由使用者確認。此處的 test AP 不與後來的五折平均 AP 混排。RF 和 XGBoost 的 AP 不受 0.5／驗證集 F1 門檻影響，因此每個模型只列一次。[RF 原始指標](results/rf_results/rf_metrics.csv)｜[XGBoost 原始指標](results/xgboost_results/xgb_metrics.csv)
 
@@ -128,14 +180,8 @@ HGB 使用 46 個原始出院欄位；CCS 方法另加三個診斷分組。這�
 | MEPS＋NHANES 分層群組統計／外部多任務編碼器 | 0.237757／0.238303 | [雙來源五折結果](results/meps_nhanes_dual_external_seed777/summary.csv)；單來源消融、六指標及與 CatBoost 原始 ICD-9 融合見[方法與分析](docs/dual_external_meps_nhanes.md)。最佳雙來源融合 0.246877，仍低於 CCS-only＋CatBoost 0.247374；配對 CI 跨零 |
 | MEPS 真實 30 天共同訓練／群組專家 CatBoost | 0.219264／0.246291 | [五折結果](results/meps_30d_joint_transfer_seed777/summary.csv)；共同訓練比同架構 UCI-only 神經網路 +0.002644，CI +0.000035 至 +0.005273；群組專家比原始 CatBoost −0.000215，CI 跨零；兩者皆未超過最佳 CCS-only HGB＋CatBoost。[方法、六指標及 SHAP](docs/meps_30d_joint_transfer.md) |
 | TabPFN 3.5：CCS-only／CCS＋MEPS | 0.212706／0.210531 | [完整五折與六指標](docs/tabpfn35_results.md)；每折 5,000 筆 context。MEPS 對 CCS-only −0.002175，95% CI −0.003569 至 −0.000832；同 context 的固定 HGB 約 0.191，完整訓練折 HGB／CatBoost 約 0.239／0.247 |
-| 三折內層 CV：CCS-only／CCS＋MEPS | 0.237235／0.237369 | [舊版執行](results/meps_ccs_hgb_inner_cv_seed777/summary.csv)；**舊程式跑滿 250–400 輪，與先前的早停方式不一致**，已修正程式但尚無修正版結果，不據此判斷三折較差 |
 
 跨 seed 的 HGB／XGBoost OOF 平均是**另一種統計口徑**：[三 seed pooled 結果](results/meps_hgb_xgb_ensemble/summary.csv)為 HGB 0.238323、無外部資料集成 0.237798、有 MEPS 集成 0.238312。配對病人 bootstrap 顯示有 MEPS 對無外部資料 +0.000514（95% CI +0.000108 至 +0.000924），但有 MEPS 與 HGB 相差 −0.000011（CI −0.001417 至 0.001413）。
-
-## 尚未有完整結果
-
-- [修正版三折內層 CV 執行指南](docs/pending_experiments.md)已補齊最新五折稽核與正式指令；仍無可核對的修正版完整五折分數。TabPFN 3.5 已完成，結果見[專文](docs/tabpfn35_results.md)。
-- LR 可由 [共用 baseline runner](train_baselines.py)重新執行；目前 README 所列 LR 數字來自使用者提供的早期紀錄，未找到對應 metrics／log／預測檔。
 
 ## 重現與檔案位置
 
