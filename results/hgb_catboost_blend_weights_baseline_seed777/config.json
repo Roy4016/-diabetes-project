@@ -1,0 +1,18 @@
+{
+  "source_oof": "/media/synology/G/314554044/diabetes_project/results/ccs_catboost_5fold_seed777/oof_all.csv.gz",
+  "seed": 777,
+  "weights_hgb": [
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7
+  ],
+  "available_groups": [
+    "baseline"
+  ],
+  "fusion": "HGB_Weight * saved HGB OOF + (1 - HGB_Weight) * saved CatBoost OOF",
+  "threshold": "top 10% within each outer test fold",
+  "bootstrap": 0,
+  "interpretation": "Prespecified descriptive weight sweep; choosing the best weight from these held-out folds requires new validation"
+}

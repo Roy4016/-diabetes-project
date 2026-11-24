@@ -1,0 +1,3 @@
+Comparison,Metric,MeanFold_Delta,CI95_Lower,CI95_Upper,FractionNegative,BootstrapReplicates,ResamplingUnit,Binning
+External Ensemble - Original Ensemble,Brier,5.515940496311766e-06,-3.6053427121439524e-05,5.320884229677854e-05,0.3575,2000,patient within fold,fixed fold-specific original-ensemble quantile edges
+External Ensemble - Original Ensemble,ECE,-0.00016102474294664974,-0.0015674705107327927,0.0016835184097496977,0.4455,2000,patient within fold,fixed fold-specific original-ensemble quantile edges

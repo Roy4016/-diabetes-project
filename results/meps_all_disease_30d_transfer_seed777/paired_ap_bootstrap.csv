@@ -1,0 +1,10 @@
+Treatment,Control,MeanFold_Delta_PR_AUC,CI95_Lower,CI95_Upper,FractionPositive,BootstrapReplicates,ResamplingUnit
+diabetes_meps_teacher_catboost,catboost_raw_plus_ccs,7.460753770688333e-06,-0.000993504842439053,0.0010102481229864121,0.5,2000,patient within fold
+diabetes_meps_teacher_hgb50,ccs_hgb_catboost_raw_plus_ccs_50,9.643509587413668e-05,-0.0005731620362663388,0.0007196381412290869,0.584,2000,patient within fold
+all_disease_meps_teacher_catboost,catboost_raw_plus_ccs,0.00038155859078132235,-0.0006690331144232338,0.0014246808750128367,0.7695,2000,patient within fold
+all_disease_meps_teacher_hgb50,ccs_hgb_catboost_raw_plus_ccs_50,0.00013777192439843878,-0.0004937739228732399,0.0007122725201848835,0.647,2000,patient within fold
+all_disease_meps_teacher_catboost,diabetes_meps_teacher_catboost,0.000374097837010634,-0.0006637176939015922,0.0014819703743673062,0.779,2000,patient within fold
+all_disease_meps_teacher_hgb50,diabetes_meps_teacher_hgb50,4.1336828524302095e-05,-0.0006628575209098844,0.0007041665938543359,0.5585,2000,patient within fold
+all_disease_joint_meps_30d,uci_only_nn,0.0005742048631036057,-0.0020200326245307706,0.003216450193565659,0.659,2000,patient within fold
+all_disease_joint_meps_30d_catboost50,uci_only_nn_catboost50,0.00010726454869980918,-0.001459196698568288,0.001689584523676929,0.549,2000,patient within fold
+all_disease_joint_meps_30d_catboost50,ccs_hgb_catboost_raw_plus_ccs_50,-0.00797468410114846,-0.010337439496494094,-0.005407944496885,0.0,2000,patient within fold

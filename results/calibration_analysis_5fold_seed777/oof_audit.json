@@ -1,0 +1,15 @@
+{
+  "rows": 99343,
+  "patients": 69990,
+  "positives": 11314,
+  "positive_rate": 0.11388824577474005,
+  "fold_rows": {
+    "1": 19869,
+    "2": 19869,
+    "3": 19868,
+    "4": 19869,
+    "5": 19868
+  },
+  "paper_baselines_match": true,
+  "patient_disjoint": true
+}

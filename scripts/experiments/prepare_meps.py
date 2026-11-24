@@ -195,7 +195,7 @@ def find_archive(root, year, filename):
     return matches[0]
 
 
-def process_year(root, year, filename):
+def process_year(root, year, filename, diabetes_only=True):
     archive = find_archive(root, year, filename)
     print(f"Source: {archive}", flush=True)
     df = read_zip(archive)
@@ -240,9 +240,8 @@ def process_year(root, year, filename):
         errors="coerce",
     )
 
-    df = df.loc[
-        diabetes == 1
-    ].copy()
+    if diabetes_only:
+        df = df.loc[diabetes == 1].copy()
 
     out = pd.DataFrame(
         index=df.index
@@ -288,7 +287,7 @@ def process_year(root, year, filename):
     )
 
     print(
-        f"[{year}] Diabetes rows: {len(out):,}; "
+        f"[{year}] {'Diabetes' if diabetes_only else 'All-disease'} rows: {len(out):,}; "
         f"unique people: "
         f"{out['person_key'].nunique():,}",
         flush=True,

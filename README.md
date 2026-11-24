@@ -6,8 +6,8 @@
 
 ## 目前結論
 
-- **同一組 seed 777、五折 patient-disjoint 評估的最高平均 AP 是 CCS-only HGB＋原始 ICD-9 CatBoost 的 0.247374**；舊 HGB 家族最高為 CCS-only HGB 的 0.239179。[新同切分比較](results/paper_fair_comparison_seed777/summary.csv)｜[舊 HGB 每折結果](results/meps_ccs_group_hgb_seed777/fold_results.csv)
-- **有使用外部病人資料的最高同組平均 AP 約 0.247140**，由 MEPS event-CCS HGB＋CatBoost 達成。它比相同 CatBoost 的 CCS-only 融合低約 0.0002，配對病人 bootstrap CI 跨零；尚無 MEPS 額外提升 AP 的證據。[結果](results/paper_fair_comparison_seed777/summary.csv)｜[配對比較](results/paper_fair_comparison_seed777/paired_ap_bootstrap.csv)
+- **沒有接外部病人資料的固定 50/50 融合中，最高五折平均 AP 是 CCS HGB＋原始 ICD-9 與 CCS 並用的 CatBoost：0.247388**；與原始 ICD-9 CatBoost 融合的 0.247374 相差 +0.000014，病人配對 bootstrap 95% CI 跨零。另以同一組 OOF 探索固定 HGB/CatBoost **30/70** 得到 AP **0.248238**，但權重是在測試折結果中比較，尚不能當成獨立驗證的最佳權重。[CCS CatBoost](results/ccs_catboost_5fold_seed777/summary.csv)｜[權重對照](results/hgb_catboost_blend_weights_baseline_seed777/summary.csv)
+- **全疾病 MEPS 30 天 teacher＋最佳 50/50 HGB/CatBoost** 的五折平均 AP **0.247526**，相同無 MEPS 基線為 0.247388（ΔAP +0.000138；配對 95% CI **[-0.000494, +0.000712]**）。糖尿病限定 teacher 融合為 0.247484；全疾病相對糖尿病限定的差值也跨零，故尚無穩定的 MEPS 增益證據。[結果](results/meps_all_disease_30d_transfer_seed777/summary.csv)｜[配對比較](results/meps_all_disease_30d_transfer_seed777/paired_ap_bootstrap.csv)
 - **CDC＋MEPS＋CMS 聯合 CatBoost** 的五折平均 AP 是 0.246367，與 CCS-only HGB 固定 50/50 融合是 0.247091；後者比沒有外部資料的同架構融合 **0.247374** 低 0.000283，配對 bootstrap 95% CI **[-0.000993, +0.000543]**。外部特徵有進入模型，但目前沒有證據顯示三來源聯合能提高整體 AP。[六項指標](results/cms_meps_cdc_catboost_seed777/summary.csv)｜[配對分析](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)｜[SHAP](results/cms_meps_cdc_catboost_seed777/shap_global.csv)
 - 跨三個 seed 的 HGB＋XGBoost 機率平均實驗中，**有 MEPS** 的 pooled OOF AP 為 0.238312，**無外部資料** 為 0.237798，差 +0.000514（病人 bootstrap 95% CI +0.000108 至 +0.000924）。這是不同於上項的「先跨 seed 平均預測，再計算 pooled AP」，不能與五折平均 AP 混排。[結果](results/meps_hgb_xgb_ensemble/summary.csv)｜[配對比較](results/meps_hgb_xgb_ensemble/patient_bootstrap.csv)
 - 使用者提供的 Rajpoot (2026) 圖片報告 **20% held-out test AP 0.237**，樣本為 99,340 encounters／69,987 patients；本專題最新五折資料為 99,343／69,990。多出的三筆恰是 `gender=Unknown/Invalid`，但無法單憑圖片確認對方是否因此排除。**分割與樣本數不同，不能以 0.239179 > 0.237 宣稱公平超越 SOTA。**
@@ -17,7 +17,7 @@
 | 資料／資源 | 在專題中的用途 | 注意 |
 |---|---|---|
 | UCI 糖尿病住院資料 | 主要預測資料；五折流程使用 99,343 筆、69,990 位病人，30 天再住院率約 11.39% | 同一病人不能跨訓練與測試折 |
-| MEPS | **真實外部病人資料**；年度追蹤、住院／急診事件與疾病紀錄 | 2008–2024 年度表有 45,436 person-years、21,176 個連續年度配對；精確事件日期的 30 天標籤目前限 2008–2012 |
+| MEPS | **真實外部病人資料**；年度追蹤、住院／急診事件與疾病紀錄 | 2008–2024 年度表有 45,436 person-years、21,176 個連續年度配對；2008–2012 全疾病住院事件中，13,178 筆具有可確定的 30 天標籤（9,672 人、1,215 正例） |
 | CDC BRFSS | 真實外部調查資料，用來估計人口群健康風險或訓練編碼器 | 沒有 UCI 的 30 天再住院標籤 |
 | CMS HRRP | 四類疾病的全國彙總 30 天再住院率，依主要診斷 CCS 對齊 UCI | 只覆蓋 16,413／99,343 筆（16.5%），不是患者級外部資料 |
 | NHANES | 真實外部調查資料，1,747 位自述糖尿病受訪者 | 結果是「過去一年曾住院」，不是 30 天再住院 |
@@ -38,14 +38,51 @@
 | 原始 HGB＋Raw CatBoost 50/50 | 0.246225 | 0.682744 | 0.287412 | 0.252253 | 0.268687 | 0.095119 |
 | CCS-only HGB | 0.239179 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 |
 | Raw ICD-9 CatBoost | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
-| **CCS HGB＋Raw CatBoost 50/50** | **0.247374** | 0.683446 | 0.288620 | 0.253313 | 0.269817 | **0.095068** |
+| CCS HGB＋Raw CatBoost 50/50 | 0.247374 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 |
+| Raw ICD-9＋CCS CatBoost | 0.246917 | 0.682729 | 0.285096 | 0.250219 | 0.266521 | 0.095059 |
+| CCS HGB＋Raw ICD-9／CCS CatBoost 50/50 | 0.247388 | 0.683406 | 0.288016 | 0.252783 | 0.269252 | 0.095055 |
+| CCS HGB＋Raw ICD-9／CCS CatBoost 30/70（探索） | **0.248238** | **0.683815** | 0.285599 | 0.250661 | 0.266992 | **0.095006** |
 | MEPS event-CCS HGB＋Raw CatBoost | 0.247139 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 |
 | CMS HGB＋Raw CatBoost | 0.246741 | 0.683289 | 0.287714 | 0.252517 | 0.268969 | 0.095083 |
 | CCS HGB＋CMS CatBoost | 0.247074 | 0.683315 | 0.289225 | 0.253844 | 0.270382 | 0.095072 |
 | CDC＋MEPS＋CMS CatBoost | 0.246367 | 0.683025 | 0.287613 | 0.252429 | 0.268875 | 0.095080 |
 | CDC＋MEPS＋CMS CatBoost＋CCS HGB 50/50 | 0.247091 | **0.683464** | **0.291138** | **0.255522** | **0.272170** | 0.095073 |
+| 糖尿病 MEPS teacher CatBoost＋CCS HGB 50/50 | 0.247484 | 0.683300 | 0.287210 | 0.252075 | 0.268498 | 0.095052 |
+| 全疾病 MEPS teacher CatBoost＋CCS HGB 50/50 | 0.247526 | 0.683539 | 0.288721 | 0.253402 | 0.269911 | 0.095043 |
 
-最後兩列來自[三來源聯合實驗](results/cms_meps_cdc_catboost_seed777/summary.csv)：CDC 是糖尿病受訪者自評健康代理分數，MEPS 是精確日期的事件 CCS 30 天再就醫／再住院群組統計，CMS 是四類疾病全國彙總率。三來源融合相對 CCS HGB＋Raw CatBoost 的 **ΔAP −0.000283**、病人分折 bootstrap 95% CI **[-0.000993, +0.000543]**。不能因 Top 10% 的 F1 略高，就宣稱 AP 有改善。[完整配對比較](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+表中的「CDC＋MEPS＋CMS」兩列來自[三來源聯合實驗](results/cms_meps_cdc_catboost_seed777/summary.csv)：CDC 是糖尿病受訪者自評健康代理分數，MEPS 是精確日期的事件 CCS 30 天再就醫／再住院群組統計，CMS 是四類疾病全國彙總率。三來源融合相對 CCS HGB＋Raw CatBoost 的 **ΔAP −0.000283**、病人分折 bootstrap 95% CI **[-0.000993, +0.000543]**。不能因 Top 10% 的 F1 略高，就宣稱 AP 有改善。[完整配對比較](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+
+表中最後兩個 MEPS teacher 模型使用**另一個 CatBoost 基線**：原始 ICD-9 46 欄再加三個 CCS 欄位，外加 teacher 風險和 CCS 群組支持度；HGB 維持 CCS-only。它們與三來源 CatBoost 的原始 46 欄基線不可直接當成外部資料消融比較。30/70 使用現存 OOF 直接重算；六項指標仍採每折 Top 10%，權重選擇屬探索性。[完整接法稽核](results/final_external_data_audit/EXTERNAL_DATA_FINAL_AUDIT.md)。
+
+### 近期補做：CCS、類別不平衡、全疾病 MEPS
+
+CatBoost 的三個 ICD-9 欄位可保留原始碼並**再加**三個 AHRQ CCS 欄位，也可用 CCS **取代**原始診斷欄位。加欄位的 CatBoost AP **0.246917**，取代後 **0.244230**；前者與 CCS HGB 固定 50/50 為 **0.247388**，和原本 CCS HGB＋Raw CatBoost **0.247374** 幾乎相同（ΔAP +0.000014，95% CI **[-0.000681, +0.000934]**）。[完整六指標與配對比較](results/ccs_catboost_5fold_seed777/summary.csv)｜[bootstrap](results/ccs_catboost_5fold_seed777/paired_ap_bootstrap.csv)。
+
+對上述 CCS HGB＋Raw ICD-9／CCS CatBoost，兩個分類器分別在**外層訓練折**使用負例／正例比作 class weight，或用 SMOTENC 將正負比增至 0.20；保留原先每折超參數，測試折未重採樣。兩種 50/50 融合皆低於無調整基線，且 class weight 的 Brier 明顯變差。[所有單模型與融合六指標](results/ccs_ensemble_imbalance_5fold_seed777/summary.csv)｜[配對 CI](results/ccs_ensemble_imbalance_5fold_seed777/paired_ap_bootstrap.csv)。
+
+| 50/50 融合處理 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| 無不平衡調整 | **0.247388** | **0.683406** | **0.288016** | **0.252783** | **0.269252** | **0.095055** |
+| 兩模型 class weight | 0.239114 | 0.682805 | 0.283484 | 0.248806 | 0.265015 | 0.213780 |
+| 兩模型 SMOTENC 0.20 | 0.237503 | 0.677175 | 0.282981 | 0.248364 | 0.264545 | 0.095756 |
+
+全疾病 MEPS 2008–2012 的住院／急診事件以同一人出院後第 1–30 天是否再住院建立標籤；13,178 筆可確定標籤，來自 9,672 人，其中 1,215 正例。原糖尿病限定的 2,688 筆事件均能匹配且標籤相同。Teacher 以 MEPS 的年齡、性別、種族、住院日數與事件 CCS 群組預測 30 天再住院，再把 `meps_30d_teacher_risk` 與 `meps_ccs_log_support` 加到 UCI 的 CCS CatBoost；HGB 本身不接收這兩欄。全疾病 teacher 融合相對無 MEPS 基線 +0.000138（CI **[-0.000494, +0.000712]**），相對糖尿病限定 teacher 融合 +0.000041（CI **[-0.000663, +0.000704]**）；均不足以確立增益。Joint Training 在同架構 NN 上為 0.219110，UCI-only NN 為 0.218535（CI 跨零），仍低於樹模型。[六項指標](results/meps_all_disease_30d_transfer_seed777/summary.csv)｜[配對結果](results/meps_all_disease_30d_transfer_seed777/paired_ap_bootstrap.csv)｜[來源、欄位、公式與融合](results/final_external_data_audit/EXTERNAL_DATA_FINAL_AUDIT.md)。
+
+### 既存 OOF 的 HGB／CatBoost 固定權重探索
+
+下面比例為 **HGB／CatBoost**，以同一組五折 OOF 直接重算，沒有重新訓練。AP 以 30/70 最高，但權重是在外層測試結果上比較，應視為探索，尚不能用這個數字宣稱泛化提升。[完整結果](results/hgb_catboost_blend_weights_baseline_seed777/summary.csv)。
+
+| 比例 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| 30/70 | **0.248238** | **0.683815** | 0.285599 | 0.250661 | 0.266992 | **0.095006** |
+| 40/60 | 0.248036 | 0.683724 | 0.287210 | 0.252076 | 0.268499 | 0.095022 |
+| 50/50 | 0.247388 | 0.683406 | 0.288016 | 0.252783 | 0.269252 | 0.095055 |
+| 60/40 | 0.246502 | 0.682878 | **0.288419** | **0.253136** | **0.269628** | 0.095104 |
+| 70/30 | 0.245193 | 0.682130 | 0.287915 | 0.252694 | 0.269157 | 0.095170 |
+
+### 既存 OOF 的機率校準
+
+十等分位箱的五折校準分析未重新訓練或校準模型；定量 ECE 對同折模型共用原融合模型的箱界。Raw CatBoost／CCS HGB＋Raw CatBoost／CDC＋MEPS＋CMS 融合的五折平均 **Brier** 分別為 0.095084／0.095068／0.095073，**ECE** 分別為 0.006964／0.007441／0.007280。外部融合相對原融合的 ΔBrier **+0.000006**（95% CI **[-0.000036, +0.000053]**）、ΔECE **−0.000161**（CI **[-0.001567, +0.001684]**），沒有可靠的機率品質提升證據。ECE 依分箱方式而變。[完整校準分析](results/calibration_analysis_5fold_seed777/CALIBRATION_ANALYSIS_SUMMARY.md)。
 
 ### 已完成的五折 LR、RF、XGBoost
 
