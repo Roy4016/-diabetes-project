@@ -1,0 +1,42 @@
+{
+  "reference_oof_sha256": "134cda41b9763550d1a9f058d858a4354ed28af4aed878f16085425f19352f41",
+  "hospital_sha256": "0689e7ec031237dc63031b938805c48377748761a3b26acab621567afa24df97",
+  "seed": 777,
+  "alert_fraction": 0.1,
+  "model": "CatBoostClassifier CPU; original choose_catboost + fit_catboost functions",
+  "inner_split": "GroupShuffleSplit 20%, random_state=seed+fold, outer-train patients only",
+  "grid": {
+    "depths": [
+      4,
+      6
+    ],
+    "iterations": [
+      250,
+      500,
+      750
+    ],
+    "learning_rate": 0.035,
+    "l2_leaf_reg": {
+      "4": 5.0,
+      "6": 15.0
+    },
+    "model_seed": 2026
+  },
+  "ablations": {
+    "E1_no_number_inpatient": [
+      "number_inpatient"
+    ],
+    "E2_no_raw_diagnoses": [
+      "diag_1",
+      "diag_2",
+      "diag_3"
+    ],
+    "E3_no_all_diagnosis_derived": [
+      "diag_1",
+      "diag_2",
+      "diag_3",
+      "number_diagnoses"
+    ]
+  },
+  "E3_status": "distinct from E2: additionally drops number_diagnoses, the diagnosis-count feature"
+}

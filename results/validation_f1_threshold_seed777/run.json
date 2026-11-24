@@ -1,0 +1,51 @@
+{
+  "seed": 777,
+  "outer_split": "fixed patient-disjoint five-fold, 99343 rows",
+  "inner_assignments": "/media/synology/G/314554044/Bhuvan_Rajpoot_SSRN/5-fold-reproduce/results/five_fold/fold_assignments.csv.gz",
+  "validation_files": [
+    "results/validation_f1_threshold_seed777/validation_fold_1.csv.gz",
+    "results/validation_f1_threshold_seed777/validation_fold_2.csv.gz",
+    "results/validation_f1_threshold_seed777/validation_fold_3.csv.gz",
+    "results/validation_f1_threshold_seed777/validation_fold_4.csv.gz",
+    "results/validation_f1_threshold_seed777/validation_fold_5.csv.gz"
+  ],
+  "policy": "max validation F1, highest threshold on tie; apply unchanged to outer OOF",
+  "metric_aggregation": "arithmetic mean of five outer fold values",
+  "source_audit": [
+    {
+      "Source": "paper",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/paper_fair_comparison_seed777/oof_all.csv.gz",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "134cda41b9763550d1a9f058d858a4354ed28af4aed878f16085425f19352f41"
+    },
+    {
+      "Source": "cms",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/cms_group_prior_5fold_seed777/oof_all.csv.gz",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "a0153c73d69ce14af34b440cd01c7371c5d2d0b92fbd8f28f63e24e7fdf99e81"
+    },
+    {
+      "Source": "cdc",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/cdc_clinical_interpretability_results/oof_all.csv",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "a158f5f7980cf11ad1d67c4fb5aadbf95c3fef25d88997cff202a5eaa395c157"
+    },
+    {
+      "Source": "diffwalk",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/cdc_diffwalk_control_results/oof_all.csv",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "901b5103ce08bf38ec6f28302967dfea0b71d096fa8c6f1f39c93e28910f8349"
+    },
+    {
+      "Source": "meps_nn",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/meps_30d_joint_transfer_seed777/oof_all.csv.gz",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "b12b4819ef93eb6ba61eeea186d8ae9acf84f6f627090e28876e0c6477a0dfc6"
+    }
+  ]
+}

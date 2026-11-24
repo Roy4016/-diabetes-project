@@ -1,0 +1,7 @@
+Treatment,Control,MeanFold_Delta_PR_AUC,CI95_Lower,CI95_Upper,FractionPositive,BootstrapReplicates,ResamplingUnit
+ccs_only_catboost_raw_50,raw_hgb_catboost_raw_50,0.0011481652871856817,0.0003189404495807648,0.002043295568950772,0.9965,2000,patient within fold
+E4_Clinical_CDCHealth,E2_Clinical,0.0003374560197639931,-0.0006528409390797031,0.001471269717007478,0.765,2000,patient within fold
+Only_DiffWalk,Permuted_DiffWalk,5.639076469667881e-05,-0.0008939609335731831,0.0010661214055362374,0.587,2000,patient within fold
+catboost_raw,E1_no_number_inpatient,0.025969521479420755,0.020711636458358485,0.030793595110756123,1.0,2000,patient within fold
+catboost_raw,E2_no_raw_diagnoses,0.00845972815602324,0.005983289850539618,0.010851120380513953,1.0,2000,patient within fold
+catboost_raw,E3_no_all_diagnosis_derived,0.009810532017505225,0.007081814958501627,0.012389164149685218,1.0,2000,patient within fold

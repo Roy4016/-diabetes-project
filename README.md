@@ -43,6 +43,19 @@ LR、RF、XGBoost 當時使用**相同的單次固定 holdout 分割**，尚未�
 | XGBoost＋SMOTENC（少數／多數比 0.20） | 0.224612 | 0.653477 | [SMOTENC](results/xgboost_smote_0.20/xgb_metrics.csv) |
 | XGBoost＋SMOTENC（0.35／0.50／1.00） | 0.213285／0.201799／0.194979 | 0.639436／0.628686／0.612077 | [0.35](results/xgboost_smote_0.35/xgb_metrics.csv)｜[0.50](results/xgboost_smote_0.50/xgb_metrics.csv)｜[1.00](results/xgboost_smote_1.00/xgb_metrics.csv) |
 
+下表補齊 **XGBoost class weight 與各個 SMOTENC 比例的 test 全部六項指標**。Precision、Recall、F1 使用在 validation 選出的 F1 最佳門檻，再固定用於 test；AP、AUROC、Brier 不受分類門檻影響。這些是早期**單次固定 holdout**，不能與後期五折平均值直接比較。
+
+| 方法 | Test AP／PR-AUC | AUROC | Precision | Recall | F1 | Brier | Validation 選出門檻 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| XGBoost 標準權重 | 0.229119 | 0.655925 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 0.131729 |
+| XGBoost class weight | 0.218236 | 0.641720 | 0.189797 | 0.488320 | 0.273350 | 0.242900 | 0.507230 |
+| XGBoost＋SMOTENC 0.20 | 0.224612 | 0.653477 | 0.213095 | 0.383760 | 0.274027 | 0.101636 | 0.150355 |
+| XGBoost＋SMOTENC 0.35 | 0.213285 | 0.639436 | 0.199886 | 0.390990 | 0.264534 | 0.104107 | 0.189829 |
+| XGBoost＋SMOTENC 0.50 | 0.201799 | 0.628686 | 0.167984 | 0.508343 | 0.252521 | 0.108397 | 0.199494 |
+| XGBoost＋SMOTENC 1.00 | 0.194979 | 0.612077 | 0.169000 | 0.469967 | 0.248603 | 0.132120 | 0.311395 |
+
+來源：[XGBoost 指標](results/xgboost_results/xgb_metrics.csv)｜[SMOTENC 0.20](results/xgboost_smote_0.20/xgb_metrics.csv)｜[0.35](results/xgboost_smote_0.35/xgb_metrics.csv)｜[0.50](results/xgboost_smote_0.50/xgb_metrics.csv)｜[1.00](results/xgboost_smote_1.00/xgb_metrics.csv)。原 CSV 另保留 0.5 門檻、validation 指標及混淆矩陣。
+
 LR 的其他使用者提供指標為 Precision **0.1818**、Recall **0.5072**、F1 **0.2677**、Brier **0.1020**。這組 LR 數字沒有可核對的 log／預測檔；早期 `logs/rf.log`、`logs/xgboost.log` 則與上述 RF／XGBoost CSV 相符。三者可在相同 holdout 分割下描述，但不能從現存紀錄證明 LR 的前處理和模型選擇流程也完全一致。後來的五折類別不平衡比較也沒有改善：無重採樣基線 AP **0.234825**，ROS **0.231277**、RUS **0.231955**、SMOTE **0.229811**、類別加權 **0.229549**。[完整 20 組設定](results/cdc_ih_5fold_results/summary_mean_std.csv)
 
 ## 五折出院時流程：CDC、MEPS 與模型比較
@@ -113,15 +126,15 @@ HGB 使用 46 個原始出院欄位；CCS 方法另加三個診斷分組。這�
 | 固定 HGB／MEPS 固定排名校正／驗證集門控校正 | 0.238865／0.238504／0.238734 | [排名校正](results/meps_event_rank_correction_seed777/summary.csv)；五折中四折門控選 0，未改善 |
 | 擴充 MEPS 2008–2024／NHANES／兩者同加 | 0.238625／0.237414／0.238111 | [真實外部資料比較](results/real_external_sources_hgb_seed777/summary.csv)；均低於同腳本 CCS-only 0.239179；NHANES 下降 CI −0.003545 至 −0.000067 |
 | MEPS＋NHANES 分層群組統計／外部多任務編碼器 | 0.237757／0.238303 | [雙來源五折結果](results/meps_nhanes_dual_external_seed777/summary.csv)；單來源消融、六指標及與 CatBoost 原始 ICD-9 融合見[方法與分析](docs/dual_external_meps_nhanes.md)。最佳雙來源融合 0.246877，仍低於 CCS-only＋CatBoost 0.247374；配對 CI 跨零 |
+| MEPS 真實 30 天共同訓練／群組專家 CatBoost | 0.219264／0.246291 | [五折結果](results/meps_30d_joint_transfer_seed777/summary.csv)；共同訓練比同架構 UCI-only 神經網路 +0.002644，CI +0.000035 至 +0.005273；群組專家比原始 CatBoost −0.000215，CI 跨零；兩者皆未超過最佳 CCS-only HGB＋CatBoost。[方法、六指標及 SHAP](docs/meps_30d_joint_transfer.md) |
+| TabPFN 3.5：CCS-only／CCS＋MEPS | 0.212706／0.210531 | [完整五折與六指標](docs/tabpfn35_results.md)；每折 5,000 筆 context。MEPS 對 CCS-only −0.002175，95% CI −0.003569 至 −0.000832；同 context 的固定 HGB 約 0.191，完整訓練折 HGB／CatBoost 約 0.239／0.247 |
 | 三折內層 CV：CCS-only／CCS＋MEPS | 0.237235／0.237369 | [舊版執行](results/meps_ccs_hgb_inner_cv_seed777/summary.csv)；**舊程式跑滿 250–400 輪，與先前的早停方式不一致**，已修正程式但尚無修正版結果，不據此判斷三折較差 |
 
 跨 seed 的 HGB／XGBoost OOF 平均是**另一種統計口徑**：[三 seed pooled 結果](results/meps_hgb_xgb_ensemble/summary.csv)為 HGB 0.238323、無外部資料集成 0.237798、有 MEPS 集成 0.238312。配對病人 bootstrap 顯示有 MEPS 對無外部資料 +0.000514（95% CI +0.000108 至 +0.000924），但有 MEPS 與 HGB 相差 −0.000011（CI −0.001417 至 0.001413）。
 
 ## 尚未有完整結果
 
-- [MEPS 30 天共同訓練與群組專家](docs/meps_30d_joint_transfer.md)使用真實住院事件的 30 天再住院標籤，同切分比較 UCI-only／UCI＋MEPS 神經網路，以及原始 CatBoost／加入外部專家風險與 CCS 支援量的 CatBoost；完整五折執行後才列入結果表。
-- [修正版三折內層 CV](scripts/experiments/run_meps_ccs_hgb_inner_cv.py)會在 patient-disjoint 內層三折共同選 HGB 參數與輪數；目前只有上表的舊版執行結果。
-- [TabPFN 3.5 實驗](scripts/experiments/run_tabpfn35_meps.py)比較 CCS-only 與 CCS＋MEPS，並以相同訓練筆數的 HGB 作對照；目前沒有可核對的 pilot 或完整五折指標，**不列入排行榜**。CPU 預設每折至多取 5,000 筆訓練資料；GPU 可逐步增加。舊的完整資料 HGB 分數與只取少量資料的 TabPFN 分數要區分。
+- [修正版三折內層 CV 執行指南](docs/pending_experiments.md)已補齊最新五折稽核與正式指令；仍無可核對的修正版完整五折分數。TabPFN 3.5 已完成，結果見[專文](docs/tabpfn35_results.md)。
 - LR 可由 [共用 baseline runner](train_baselines.py)重新執行；目前 README 所列 LR 數字來自使用者提供的早期紀錄，未找到對應 metrics／log／預測檔。
 
 ## 重現與檔案位置
@@ -153,5 +166,16 @@ python preprocess.py
 ```bash
 python train_baselines.py --fold 1 --models lr rf xgb
 ```
+
+要在**近期論文比較使用的 99,343 筆、69,990 位病人五折分割**上，一次重跑早期 LR（標準與 balanced）、RF（標準與 balanced）、XGBoost（標準、class weight、四種 SMOTENC 比例），使用：
+
+```bash
+CUDA_VISIBLE_DEVICES=5 python scripts/experiments/run_classic_5fold.py \
+  --reference-oof results/meps_ccs_group_hgb_seed777/oof_all.csv \
+  --outdir results/classic_5fold_recheck_seed777 \
+  --max-folds 5 --device cuda --seed 777
+```
+
+這支腳本核對近期 OOF 的 encounter、病人、標籤與 fold，並產生十種方法的 `summary.csv`、`fold_metrics.csv` 和 `oof_long.csv`。現有 `data/processed/uci_5fold/` 是較早的 **99,340 筆**版本，不能直接和近期 99,343 筆結果混為同一分割比較。LR、RF 使用 CPU，XGBoost 使用指定的 GPU。詳見 [實驗指令](scripts/experiments/README.md)。
 
 原始實驗與完整數字請以各結果目錄的 `config.json`、`summary.csv`／`summary_mean_std.csv`、`fold_results.csv`、`oof_all.csv` 和 bootstrap CSV 為準。對外報告時請同時寫明**資料定義、分割方式、平均或 pooled AP、是否使用外部病人資料**。

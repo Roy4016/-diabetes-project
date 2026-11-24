@@ -1,5040 +1,755 @@
-# 糖尿病 30 天再住院專題：實驗、論文復現與結果總報告
+# 糖尿病 30 天再住院：五折實驗與完整結果分析
 
-更新日期：2026-11-22。主要任務是用 UCI Diabetes 130-US Hospitals 的出院資訊預測 30 天內再住院，並評估真實外部病人資料能否提高預測能力。本報告整合專題早期實驗、CDC／MEPS／NHANES 外部資料實驗、Rajpoot 論文復現、CatBoost 同切分補跑、MEPS＋NHANES 雙來源實驗與 SHAP。**文末「逐實驗完整指標」直接列出已保存摘要的所有欄位和數值；來源沒有紀錄的指標明確說明，不以其他實驗的數值補上。**
+更新日期：2026-11-24。正式比較限於同一 99,343 筆、seed 777 病人互斥五折；CDC、MEPS、CMS 為正式 external data。其他已完成實驗保留於後面的歷史附錄，不納入主排行。
 
-閱讀順序：第 1–7 節是研究解讀；第 8 節是重現指令；第 9 節列專題的摘要、逐折與 bootstrap 原始指標；第 10 節列論文復現專案原始指標；第 11 節列本專題完整 SHAP 排名。後三節較長，查特定實驗時可搜尋結果目錄名稱。
+產生方式：先執行 `python scripts/experiments/complete_final_presentation.py --bootstrap 2000`，再執行 `python scripts/experiments/build_results_analysis.py` 整合歷史附錄。前半部正式主表只依據已核對的實際 OOF 和原始資料生成；不使用早期單次 holdout、99,340 筆隊列或其他 seed。
 
-## 1. 先看結論
+主要輸出：[六項指標](results/final_presentation_completion/final_experiment_metrics.csv)、[消融指標](results/final_presentation_completion/final_ablation_metrics.csv)、[配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)、[CMS coverage](results/final_presentation_completion/cms_coverage_analysis.csv)、[OOF 稽核](results/final_presentation_completion/source_audit.csv)。
 
-1. 目前同一組 seed 777、病人互斥五折切分中，**最高五折平均 PR-AUC／AP 為 0.247374**：CCS-only HGB 與原始 ICD-9 CatBoost 的固定 50/50 機率平均。這組同時有最高平均 AUROC 0.683446、Precision 0.288620、Recall 0.253313、F1 0.269817 和最低 Brier 0.095068。另一個 CCS-only HGB＋診斷家族 CatBoost 的 AP 為 0.247337，僅低 0.000037；未做這兩個融合的配對區間，因此不可宣稱兩者有確定差異。[同切分結果](results/paper_fair_comparison_seed777/summary.csv)
-2. **需要使用外部病人資料時**，目前分數最高的是 MEPS event-CCS HGB＋診斷家族 CatBoost，AP 0.247140；原始 ICD-9 版本為 0.247139。這證明完成了真實 MEPS 資料的模型整合，但**沒有證明 MEPS 對最終 AP 有額外貢獻**：與相同 CatBoost 的 CCS-only 融合相比，差值約 −0.0002，配對 bootstrap 95% 區間均跨零。[配對差值](results/paper_fair_comparison_seed777/paired_ap_bootstrap.csv)
-3. CatBoost 本身確實提高表現。原始 ICD-9 CatBoost AP 0.246506，對 CCS-only HGB 的五折平均差為 **+0.007327**，配對病人 bootstrap 95% CI **[+0.004039, +0.010484]**。因此可說模型選擇帶來可辨認的增益；不能把這個增益歸給 MEPS。
-4. Rajpoot 論文圖片報告的 held-out AP 約 **0.237**。最佳五折 AP 0.247374 在數值上高 **0.010374**，但**論文 80/20 測試分割與本專題五折不同，這不是同測試集的直接比較**。公平的比較是把論文復現 HGB 跑在本專題五折：基準 AP 0.228703，另一種同 46 欄 HGB 編碼 AP 0.237261；我們的 CatBoost／融合與這兩組使用逐筆相同的五折。[切分核對](results/paper_fair_comparison_seed777/audit.json)
-5. SHAP 顯示三個已解釋模型中，**過去住院次數**與**出院去向**穩定排前二。含 MEPS 的 HGB 裡，`meps_ccs_revisit_mean` 排第五，證明模型使用了外部訊號，但 SHAP 重要性不是外部資料提升 AP 的證據。[全域排名](results/paper_fair_comparison_seed777/shap_global.csv)
+## 研究協定與可重用資料
 
-## 2. 資料、標籤與切分
+UCI 共 **99,343** 次就醫、**69,990** 位病人，seed **777**，病人互斥五折。所有納入的 OOF 均逐筆核對 Encounter ID、Patient ID、Fold、Label。AP 為 `average_precision_score`；表列六項指標為各測試折的**算術平均**。Precision、Recall、F1 固定取每折預測風險最高 10%。合併所有 OOF 計算的 pooled AP 存在 CSV 的另一欄，不與五折平均混淆。對照資料及 SHA256 見 `source_audit.csv`。
 
-| 資源 | 角色 | 可支援的推論與限制 |
-|---|---|---|
-| UCI Diabetes 130-US Hospitals | **主要資料**；標籤為出院後 30 天內再住院 | 最新五折實驗有 99,343 次住院、69,990 位病人、11,314 個陽性個案；陽性率 11.39%。原始 CSV SHA-256：`0689e7ec031237dc63031b938805c48377748761a3b26acab621567afa24df97`。 |
-| MEPS | **真實外部病人資料**；年度利用率、急診／住院事件和 ICD 診斷 | 年度追蹤結果與 UCI 的 30 天再住院不是同一標籤；精確事件日期的 30 天標籤目前主要使用 2008–2012 年事件。 |
-| CDC BRFSS | 真實外部調查資料，用於健康風險群組、編碼器和控制實驗 | 沒有與 UCI 一致的 30 天再住院標籤，人口與醫院個案有顯著 domain shift。 |
-| NHANES | 真實外部調查資料；處理後有 1,747 位自述糖尿病受訪者 | 有「過去一年曾住院」資訊，不是 30 天再住院；不應把它當相同任務標籤。 |
-| AHRQ CCS | 公開 ICD 疾病分類／對照表 | 是知識表，**不是外部病人 dataset**。CCS-only 模型不能單獨滿足「加入 external data」的要求。 |
+CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資料；正式的外部資料來源限定為 CDC BRFSS、MEPS、CMS HRRP。六項指標的方向為 PR-AUC、AUROC、Precision、Recall、F1 越高越好，Brier 越低越好。
 
-### 本報告有三種不同評估協定
+先前論文報告的 0.237 AP 使用不同的單次 holdout；它只能作背景參考。公平比較以此處同一 99,343 筆、同五折 OOF 的 Rajpoot HGB 復現（AP 0.228703）及其他同切分模型為準。
 
-| 協定 | 用在哪裡 | 可比較範圍 |
-|---|---|---|
-| 早期固定 holdout | 初期 LR、RF、XGBoost、SMOTENC、部分 CDC 實驗 | 這些方法在相同 holdout 下可描述性比較；不能直接與後期五折平均 AP 排名。LR 數值由使用者提供，沒有 log 可核對前處理。 |
-| Rajpoot 復現的 80/20 病人互斥測試 | 論文復現、原有 HGB／CatBoost、Salim `shap-metrics` 延伸 | 該測試集有 19,942 筆、13,998 位病人。AP 是**一個測試集**的值。不能與五折平均 AP 當成同一次測試。 |
-| 本專題最新五折 patient-disjoint | Bhuvan HGB 五折復現、CCS／MEPS HGB、CatBoost 和 SHAP | 99,343 筆、69,990 位病人；每折測試約 19,868–19,869 筆。`patient_nbr` 同病人只落在一個外層測試折。此表內才是目前主要的公平比較。 |
+已重用：論文復現 HGB、Raw HGB、CCS HGB、Raw CatBoost、MEPS、CDC、CMS 的既有五折 OOF；CMS 既有 2,000 次病人分折 bootstrap；MEPS 既有配對 bootstrap。新計算：Raw HGB＋Raw CatBoost 固定 50/50 融合、CMS covered 子群與缺少的配對 bootstrap。Ablation 只有重新訓練後才納入。
 
-注意：根目錄 [preprocess.py](preprocess.py) 目前另排除 3 筆 `gender=Unknown/Invalid`，產出 **99,340 筆／69,987 位病人**，且折別不等於最新 HGB／MEPS OOF。本報告的同切分五折**採用 99,343 筆的固定 OOF 折別**；執行比較腳本時會逐筆檢查 `encounter_id`、`patient_nbr`、標籤與 `Fold`，不能以 `preprocess.py` 的另一套輸出替換。這三筆差異也表示僅靠論文圖片無法斷定排除規則完全一致。
+## 主要 Baseline 與 CCS 融合
 
-### 指標與統計口徑
+| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| bhuvan_hgb | 0.228703 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 |
+| roy_hgb_46 | 0.237261 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 |
+| ccs_only_hgb | 0.239179 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 |
+| catboost_raw | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
+| raw_hgb_catboost_raw_50 | 0.246225 | 0.682744 | 0.287412 | 0.252253 | 0.268687 | 0.095119 |
+| ccs_only_catboost_raw_50 | 0.247374 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 |
 
-- **PR-AUC／AP** 是主指標；程式用 `sklearn.metrics.average_precision_score`，不等於以梯形積分的 PR 曲線面積。五折平均 AP 是五個外層測試折 AP 的算術平均；`Pooled_PR_AUC` 是把所有 OOF 預測合併再計算一次，兩者**不可混用**。
-- **AUROC** 衡量整體排序；**Brier Score** 衡量機率預測誤差，越低越好。Precision、Recall、F1 依每折測試預測分數最高的**固定 10% 警示量**計算，不用測試標籤尋找最有利門檻。早期實驗及 Rajpoot 原復現可能採 0.5、驗證集 F1／F2 或其他門檻；其 Precision／Recall／F1 不能與此 10% 警示量直接比較。
-- **配對病人 bootstrap** 在每折內以病人為單位重新抽樣，同一組抽樣同時計算兩個模型的 AP 差；報告 95% 區間。折間標準差是五個折的離散程度，**不是**模型差值的信賴區間。
-- 當同一五折結果反覆用於選特徵、模型和融合時，最佳分數有探索性選模偏差。若要對外宣稱在相同評估條件下超越一篇論文，仍需固定方法後再做獨立測試，或要求雙方使用同一份事先凍結的測試資料。
+## CMS HRRP
 
-## 3. 論文復現與同切分公平比較
+| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| cms_hgb | 0.238496 | 0.678059 | 0.281873 | 0.247390 | 0.263508 | 0.095499 |
+| cms_catboost_raw | 0.246507 | 0.682518 | 0.286103 | 0.251103 | 0.267463 | 0.095083 |
+| cms_hgb_catboost_raw_50 | 0.246741 | 0.683289 | 0.287714 | 0.252517 | 0.268969 | 0.095083 |
+| ccs_only_hgb_cms_catboost_50 | 0.247074 | 0.683315 | 0.289225 | 0.253844 | 0.270382 | 0.095072 |
+| cms_hgb_cms_catboost_50 | 0.246644 | 0.683144 | 0.290232 | 0.254727 | 0.271323 | 0.095088 |
 
-### 3.1 Rajpoot (2026) 原論文與 Bhuvan 復現
+## CDC BRFSS
 
-[Bhuvan_Rajpoot_SSRN 復現說明](../Bhuvan_Rajpoot_SSRN/README.md)對應 Rajpoot 的「入院時 10 欄 LR」與「出院時 46 欄 HGB」。原論文圖中的 held-out AP 是入院 LR **0.206**、出院 HGB **0.237**，AUROC 依序 **0.631**、**0.677**。復現在其原 80/20 病人互斥測試上得到入院 LR AP **0.2058**、AUROC **0.6308**；出院 HGB AP **0.237372**、AUROC **0.679955**。[原復現指標](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/46_fields/test_metrics.csv)包含 HGB、CatBoost 等延伸模型的 Brier。
+| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E2_Clinical | 0.234919 | 0.678280 | 0.276334 | 0.242530 | 0.258331 | 0.095664 |
+| E4_Clinical_CDCHealth | 0.235256 | 0.678403 | 0.276939 | 0.243060 | 0.258896 | 0.095640 |
+| Only_DiffWalk | 0.235084 | 0.678039 | 0.277039 | 0.243148 | 0.258990 | 0.095663 |
+| No_DiffWalk | 0.234110 | 0.677909 | 0.274824 | 0.241204 | 0.256919 | 0.095693 |
+| Permuted_DiffWalk | 0.235028 | 0.678541 | 0.274622 | 0.241026 | 0.256730 | 0.095662 |
 
-此復現使用 99,340 筆／69,987 位病人，先做 80/20 development/test 分割，再用 development 內的三折分組驗證選模型，最後只在 20% 測試上報告一次。這與我們五折的 99,343 筆不同，因此原論文 0.237 應作**文獻報告值**，不是五折的直接對照組。
+## MEPS
 
-### 3.2 論文 HGB 方法在本專題五折上重跑
+| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ccs_meps_group_hgb | 0.239077 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 |
+| ccs_meps_catboost_raw_50 | 0.247139 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 |
+| uci_only_nn | 0.216620 | 0.664481 | 0.263243 | 0.231040 | 0.246093 | 0.097245 |
+| joint_meps_30d | 0.219264 | 0.665757 | 0.263746 | 0.231482 | 0.246563 | 0.097049 |
+| joint_meps_30d_catboost50 | 0.239537 | 0.680805 | 0.283686 | 0.248983 | 0.265204 | 0.095406 |
 
-[Bhuvan 五折復現](../Bhuvan_Rajpoot_SSRN/5-fold-reproduce/README.md)讀入同一 UCI 原始 CSV，用 seed 777 的 `StratifiedGroupKFold`，將每位病人只分配到一個測試折。其 OOF 與本專題 MEPS event-CCS OOF 的 **99,343 筆** `encounter_id`、病人、標籤、折別**逐筆完全相同**。五折測試筆數依序 19,869、19,869、19,868、19,869、19,868。
+## CatBoost 原始特徵消融
 
-它提供兩種 46 個出院欄位的 HGB：`bhuvan_hgb` 依復現的診斷章節、年齡中點與序數編碼處理；`roy_hgb_46` 保留原始 ICD-9／年齡區間，訓練折內合併罕見類別後 one-hot。兩者用相同的 HGB 設定與相同外層切分，五折平均 AP 分別 **0.228703**、**0.237261**。後者相對前者高 **0.008558**，顯示特徵表示方式對 HGB 的影響很大。這兩組是**同資料切分的實際復現對照**，不是把論文圖片的 0.237 硬移入五折表。
+| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier | Full_minus_Ablated_PR_AUC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0_full_catboost | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 | 0.000000 |
+| E1_no_number_inpatient | 0.220537 | 0.658885 | 0.251158 | 0.220433 | 0.234794 | 0.096609 | 0.025970 |
+| E2_no_raw_diagnoses | 0.238047 | 0.673475 | 0.280060 | 0.245800 | 0.261814 | 0.095611 | 0.008460 |
+| E3_no_all_diagnosis_derived | 0.236696 | 0.671660 | 0.277845 | 0.243855 | 0.259743 | 0.095702 | 0.009811 |
 
-### 3.3 原有 CatBoost 擴充與 Salim SHAP 分支
+E0 是原始 46 欄 Raw ICD-9 CatBoost，直接重用 OOF。E1 移除 `number_inpatient`；E2 只移除 `diag_1`、`diag_2`、`diag_3`；E3 另外移除由診斷資料計算的 `number_diagnoses`。此 Raw CatBoost 未含 CCS 或其他診斷衍生欄位。每組已完成的消融均沿用原本的病人互斥內層選參程序並重新訓練；未完成者只列於缺項表。
 
-[Bhuvan 的 HGB＋CatBoost 延伸](../Bhuvan_Rajpoot_SSRN/hgb_catboost/README.md)在**原 80/20**病人互斥測試上，46 欄 HGB AP **0.237372**、診斷家族 CatBoost **0.251383**、固定 50/50 融合 **0.249442**、原始 ICD-9 CatBoost **0.252763**。擴充到 85／88 欄的融合 AP **0.251195**。這些數字證明 CatBoost 在原復現測試上有潛力，**不能直接排序於我們五折平均表**。
+## 配對比較與不確定性
 
-本地資料夾 [`salim-ibrahim-2026-readmission`](../salim-ibrahim-2026-readmission/README.md)的 `shap-metrics` 分支，依它的 README 與腳本內容，實際是**對 Rajpoot 復現 80/20 結果補充完整指標、校準、子群體與 SHAP 的延伸**，不是獨立的 Salim & Ibrahim 原論文模型五折程式。該分支報告 CatBoost 相對 HGB AP 約 +0.014，並指出過去住院次數和出院去向的 SHAP 重要性很高。本專題沿用其 TreeSHAP 分析思路，在**本專題自己的五折測試預測**上重新計算；不把該分支的 80/20 指標混入五折比較。**Salim & Ibrahim 原論文模型目前未在這份五折上重現**，因此不能稱它已有同切分模型分數。
+以下差值均為五折 AP 差的平均。Bootstrap 單位為每折內的病人；95% CI 不能直接解讀為來源造成改變的因果證據。完整比較見 `final_bootstrap_comparisons.csv`。
 
-## 4. 最新五折主結果：所有六項指標
+| Treatment | Control | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper |
+| --- | ---: | ---: | ---: | ---: |
+| cms_hgb_catboost_raw_50 | ccs_only_catboost_raw_50 | -0.000633 | -0.001170 | -0.000063 |
+| ccs_only_hgb_cms_catboost_50 | ccs_only_catboost_raw_50 | -0.000300 | -0.000908 | 0.000487 |
+| joint_meps_30d | uci_only_nn | 0.002644 | 0.000035 | 0.005273 |
+| ccs_only_catboost_raw_50 | raw_hgb_catboost_raw_50 | 0.001148 | 0.000319 | 0.002043 |
+| E4_Clinical_CDCHealth | E2_Clinical | 0.000337 | -0.000653 | 0.001471 |
+| catboost_raw | E1_no_number_inpatient | 0.025970 | 0.020712 | 0.030794 |
+| catboost_raw | E2_no_raw_diagnoses | 0.008460 | 0.005983 | 0.010851 |
+| catboost_raw | E3_no_all_diagnosis_derived | 0.009811 | 0.007082 | 0.012389 |
 
-表中 PR-AUC、AUROC、Precision、Recall、F1、Brier 均是**五折算術平均**，其中 Precision／Recall／F1 使用每折最高風險 10% 警示量。`pooled AP` 是另一統計口徑，保留供核對。[完整 CSV](results/paper_fair_comparison_seed777/summary.csv)還有五折 AP 標準差。
+## CMS coverage 與特徵內容
 
-| 方法與資料 | 外部病人資料 | 平均 AP ↑ | Pooled AP ↑ | AUROC ↑ | Precision ↑ | Recall ↑ | F1 ↑ | Brier ↓ |
-|---|:---:|---:|---:|---:|---:|---:|---:|---:|
-| Rajpoot 復現 HGB (`bhuvan_hgb`) | 否 | 0.228703 | 0.227821 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 |
-| 同 46 欄 one-hot HGB (`roy_hgb_46`) | 否 | 0.237261 | 0.235940 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 |
-| CCS-only HGB | 否；CCS 是分類表 | 0.239179 | 0.237823 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 |
-| MEPS event-CCS HGB | **是** | 0.239077 | 0.238043 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 |
-| CatBoost：診斷家族 | 否 | 0.244454 | 0.243281 | 0.677482 | 0.284089 | 0.249336 | 0.265580 | 0.095233 |
-| CatBoost：原始 ICD-9 | 否 | 0.246506 | 0.245430 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
-| Rajpoot HGB＋CatBoost 家族（50/50） | 否 | 0.241891 | 0.240679 | 0.677469 | 0.283082 | 0.248451 | 0.264638 | 0.095395 |
-| CCS-only HGB＋CatBoost 家族（50/50） | 否 | 0.247337 | **0.246005** | 0.681428 | 0.287815 | 0.252606 | 0.269063 | 0.095093 |
-| MEPS HGB＋CatBoost 家族（50/50） | **是** | 0.247140 | 0.245854 | 0.681210 | 0.288318 | 0.253048 | 0.269534 | 0.095118 |
-| **CCS-only HGB＋CatBoost 原始 ICD-9（50/50）** | 否 | **0.247374** | 0.245932 | **0.683446** | **0.288620** | **0.253313** | **0.269817** | **0.095068** |
-| MEPS HGB＋CatBoost 原始 ICD-9（50/50） | **是** | 0.247139 | 0.245889 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 |
-| MEPS HGB 同參數重訓（SHAP 用） | **是** | 0.239077 | 0.238043 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 |
+CMS 只依 UCI 主要診斷 CCS 對應四個概念：心肌梗塞、心衰竭、肺炎、COPD。命中率為 **16,413/99,343（16.5%）**。數值是 CMS 全國風險標準化再住院率，並非個人標籤。`ccs_only_hgb_cms_catboost_50` 是原始 **46 欄＋CCS 的 HGB**，與 **原始 46 欄＋CMS rate／mapped indicator 的 CatBoost** 以預測機率 50/50 平均；它是數值最好的 CMS 組合，並未加入 MEPS 或 CDC。它的平均 AP **0.247074**，對原始 CCS HGB＋Raw CatBoost **0.247374**，差 **-0.000300**。
 
-`ccs_meps_refit_hgb` 是為計算 SHAP 重新建出的同一模型，與原 `ccs_meps_group_hgb` 的五折 OOF 機率**最大絕對差為 0**；它不是新的獨立候選方法，也不應重複計入方法數。[執行紀錄](results/paper_fair_comparison_seed777/run.json)
+子群分析是在既有五折上探索；各子群的 Precision／Recall／F1 重新以該子群內最高 10% 評估，不能與全體門檻數字直接替換。正例率及樣本數列於下表：
 
-CatBoost 在每個外層訓練折內再用**病人互斥的 20%**作內層驗證，候選深度 4／6、樹數 250／500／750，依內層 AP 選擇、Brier 打破平手，再用整個外層訓練折重訓。原始 ICD-9 與診斷家族是兩種特徵表示。五折各自都選到深度 **6**、**750 棵樹**，剛好在目前搜尋上界；這指出更大樹數是後續可測的假設，**不能預先當成已改善的結果**。融合權重固定 50/50，沒有依測試折標籤挑選。
+| Subset | Model | N | Positive_Count | Positive_Rate | PR-AUC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CMS-covered | ccs_only_catboost_raw_50 | 16413 | 2011 | 0.122525 | 0.225494 |
+| CMS-covered | ccs_only_hgb_cms_catboost_50 | 16413 | 2011 | 0.122525 | 0.226265 |
+| CMS-uncovered | ccs_only_catboost_raw_50 | 82930 | 9303 | 0.112179 | 0.251922 |
+| CMS-uncovered | ccs_only_hgb_cms_catboost_50 | 82930 | 9303 | 0.112179 | 0.251448 |
 
-### 4.1 哪些改進有證據？
+## SHAP 解讀
 
-| 同切分配對比較 | 五折平均 ΔAP | 95% 病人 bootstrap CI | 解讀 |
-|---|---:|---:|---|
-| 診斷家族 CatBoost − Rajpoot HGB | +0.015750 | [+0.012203, +0.019482] | 在相同五折下明確較高；同時換了模型與類別處理。 |
-| 原始 ICD-9 CatBoost − Rajpoot HGB | +0.017803 | [+0.014078, +0.021370] | 較高；同時更換診斷表示。 |
-| 原始 ICD-9 CatBoost − CCS-only HGB | +0.007327 | [+0.004039, +0.010484] | 即使對較強的 HGB 基線，CatBoost 仍較高。 |
-| Rajpoot HGB＋CatBoost 家族 − Rajpoot HGB | +0.013188 | [+0.011011, +0.015426] | 固定融合比原復現 HGB 好，但低於較強的 CCS-only 融合。 |
-| MEPS HGB＋CatBoost 家族 − MEPS HGB | +0.008063 | [+0.005931, +0.010235] | 增益主要來自加入 CatBoost；不能據此說 MEPS 有增益。 |
-| MEPS 融合家族 − CCS-only 融合家族 | **−0.000197** | [−0.001026, +0.000604] | MEPS 額外貢獻未證明。 |
-| MEPS 融合原始 ICD-9 − CCS-only 融合原始 ICD-9 | **−0.000234** | [−0.001096, +0.000547] | 同樣未證明。 |
+Raw ICD-9 CatBoost 的前五個 Mean Absolute SHAP（log-odds 尺度）：
 
-這些區間是**已訓練模型在固定外層測試折上的病人抽樣不確定性**；多次嘗試後挑最高分的選模不確定性並未包含其中。尤其最佳兩個 CCS-only 融合只差 0.000037，現有配對檔沒有該差值的 CI，不能聲稱原始 ICD-9 融合確定勝過診斷家族融合。
+| Feature | MeanAbsSHAP_logodds | Rank |
+| --- | ---: | ---: |
+| number_inpatient | 0.238927 | 1 |
+| discharge_disposition_id | 0.139130 | 2 |
+| diag_1 | 0.077924 | 3 |
+| diag_3 | 0.059604 | 4 |
+| payer_code | 0.042366 | 5 |
 
-### 4.2 與論文 SOTA 數字怎麼寫
+CMS CatBoost 中兩個外部特徵：
 
-- **可寫**：「在 seed 777、99,343 筆、病人互斥五折的同一資料切分中，論文復現 HGB 平均 AP 0.228703，本專題最佳融合 0.247374，差 +0.018670。」也可補充「另一個 46 欄 one-hot HGB 對照為 0.237261」。
-- **可作背景，但不能稱同條件勝出**：「論文圖片報告 80/20 held-out AP 約 0.237；本專題最佳五折平均 AP 0.247374，數值高 0.010374。」兩者樣本數、切分與統計量都不同。
-- **外部資料要求要獨立交代**：含 MEPS 的最佳方法 AP 約 0.247140，數值高於 0.237；但與不含 MEPS 的同模型配對比較未見額外 AP 提升。不可把 CatBoost 的改進寫成 MEPS 帶來的改進。
+| Feature | MeanAbsSHAP_logodds | Rank |
+| --- | ---: | ---: |
+| cms_readmission_rate | 0.006701 | 23 |
+| cms_mapped | 0.000349 | 39 |
 
-## 5. SHAP：哪些特徵影響預測？
+SHAP 只說明模型預測如何使用特徵，不等於移除特徵後的 AP 變化。`number_inpatient` 是否必要，以 E1 的重新訓練消融與配對 CI 為準；CMS 外部特徵排名低，且全體 AP 未改善。
 
-[比較腳本](scripts/experiments/run_paper_fair_comparison.py)在五個**外層測試折**各抽 1,000 筆，共解釋每模型 5,000 筆。CatBoost 用內建精確 TreeSHAP；HGB 用 TreeExplainer，將 one-hot 欄位逐筆加總回原始特徵。兩者都驗證 SHAP 加總等於模型 raw log-odds 輸出。全域排序使用**平均絕對 SHAP**，所以大代表典型預測影響大，**不是**「提高風險」的方向，也不是臨床因果效果。各模型的尺度、基線和相關特徵歸因不同，跨模型大小只作描述性參考。
+## External Data：觀察、可能原因與未驗證假設
 
-| 模型 | 第 1 名 | 第 2 名 | 第 3 名 | 第 4 名 | 第 5 名 |
-|---|---|---|---|---|---|
-| 診斷家族 CatBoost | `number_inpatient` 0.274974 | `discharge_disposition_id` 0.145840 | `number_diagnoses` 0.051209 | `payer_code` 0.047029 | `diag_1` 0.046731 |
-| 原始 ICD-9 CatBoost | `number_inpatient` 0.238927 | `discharge_disposition_id` 0.139130 | `diag_1` 0.077924 | `diag_3` 0.059604 | `payer_code` 0.042366 |
-| MEPS HGB | `number_inpatient` 0.290321 | `discharge_disposition_id` 0.205978 | `number_diagnoses` 0.046228 | `diabetesMed` 0.040975 | **`meps_ccs_revisit_mean` 0.040843** |
+下表只做同架構配對比較；兩個模型各自的六項指標見前述正式表，[完整配對表](results/final_presentation_completion/external_data_comparisons.csv)另含兩者的六項數值與對齊方式。
 
-五折中，`number_inpatient` 在這三模型**每折均為第一**，`discharge_disposition_id` **每折均為第二**。原始 ICD-9 CatBoost 的 `diag_1`、`diag_3` 每折分別為第三、第四，排名穩定。MEPS HGB 的 `meps_ccs_revisit_mean` 五折排名依序 **6、3、5、6、8**；所有 `meps_` 特徵的平均絕對 SHAP 加總約占該模型全部特徵的 **6.1%**。這說明外部訊號進入模型，卻不代表最終 AP 改善，因為特徵可能和既有訊號重疊或使排序變差。`MeanSHAP_logodds` 平均正負值接近 0，可能是不同個案方向互相抵銷；要判斷某特徵數值變大時風險如何變化，需逐筆 SHAP 或依賴圖，不能只看全域平均。[完整排名](results/paper_fair_comparison_seed777/shap_global.csv)｜[各折值](results/paper_fair_comparison_seed777/shap_fold.csv)｜[CatBoost 圖](results/paper_fair_comparison_seed777/shap_catboost_raw.png)｜[MEPS HGB 圖](results/paper_fair_comparison_seed777/shap_ccs_meps_refit_hgb.png)
+| 來源 | 原始模型 | 外部模型 | ΔAP | 95% CI |
+| --- | --- | --- | ---: | ---: |
+| CDC BRFSS | `E2_Clinical` | `E4_Clinical_CDCHealth` | +0.000337 | [-0.000653, +0.001471] |
+| CDC BRFSS | `Permuted_DiffWalk` | `Only_DiffWalk` | +0.000056 | [-0.000894, +0.001066] |
+| MEPS | `ccs_only_catboost_raw_50` | `ccs_meps_catboost_raw_50` | -0.000234 | [-0.001096, +0.000547] |
+| MEPS | `uci_only_nn` | `joint_meps_30d` | +0.002644 | [+0.000035, +0.005273] |
+| CMS HRRP | `ccs_only_hgb` | `cms_hgb` | -0.000683 | [-0.001756, +0.000367] |
+| CMS HRRP | `catboost_raw` | `cms_catboost_raw` | +0.000001 | [-0.001165, +0.001238] |
+| CMS HRRP | `ccs_only_catboost_raw_50` | `cms_hgb_catboost_raw_50` | -0.000633 | [-0.001170, -0.000063] |
+| CMS HRRP | `ccs_only_catboost_raw_50` | `ccs_only_hgb_cms_catboost_50` | -0.000300 | [-0.000908, +0.000487] |
 
-## 6. 專題其他已做實驗：方法、結果與解讀
+### 資料來源、對齊方式與限制
 
-下述每個家族列主要對照與結論；**逐實驗完整指標附錄**保留各已執行結果 CSV 的所有欄位（例如 AP／AUROC／Precision／Recall／F1／Brier、標準差、外部權重、閾值與混淆矩陣，視來源實際紀錄而定）。不同家族可能使用不同特徵、分割或指標門檻，請依來源檔各自解讀。
+| 來源 | 使用的資訊與對齊方式 | 主要限制 |
+| --- | --- | --- |
+| CDC BRFSS | 健康問卷中的慢性病、自評健康及 DiffWalk 訊號，經共通人口／共病欄位對齊 UCI 臨床特徵；同架構的 Clinical 與 Clinical＋CDC 比較。 | 問卷測量與住院 EHR 不同；部分特徵只能映射到疾病群組，缺乏患者實測值。 |
+| MEPS | 年度利用率、30 天事件及其 ICD-9／CCS 疾病群組統計，按診斷群組映射到 UCI；共同訓練另以 UCI-only NN 配對。 | 年度標籤與 30 天再住院不等價；事件群組樣本較少，與 UCI 既有利用史可能重疊。 |
+| CMS HRRP | 四種疾病的全國彙總 30 天再住院率，以 UCI 主要診斷 CCS 映射；未命中者保留缺失／對應旗標。 | 只覆蓋 16.5%，沒有個人級資料，疾病類別有限；本次 CMS 指標期間為 2023–2025，與歷史 UCI 住院期間不同。 |
 
-### 6.1 早期單次 holdout：LR、RF、XGBoost、SMOTENC
+- **CDC：已觀察** Clinical 基線 AP **0.234919**，加入 CDC 健康訊號 **0.235256**（差 **+0.000337**），DiffWalk 真值與置換對照接近。**可能原因**是問卷的自評健康與 UCI 住院紀錄測量方式不同，且映射的共病旗標不等於真實病史。這些是 domain shift 與個人化不足的可能解釋，**不是已證明的因果原因**。CDC 沒有再住院標籤。
+- **MEPS：已觀察** CCS HGB＋Raw CatBoost AP **0.247374**，換為 MEPS HGB＋Raw CatBoost **0.247139**；共同訓練 NN 從 **0.216620** 到 **0.219264**（差 **+0.002644**，原配對 CI 見表）。**可能原因**是年度利用率與 30 天標籤不完全相同，以及外部利用訊號與 `number_inpatient` 重疊；這些尚未被正式因果分解。共同訓練的小幅正差支持 MEPS 在該神經網路設定下帶來可用訊號，但未使目前最佳組合改善。
+- **CMS：已觀察** 四類彙總率覆蓋 16.5%；最佳 CMS 組合 AP **0.247074** 低於基準 **0.247374**。CMS HGB＋原 CatBoost 的配對 CI 完全小於零。**可能原因**是來源只有四類群組、沒有個人狀態，且疾病訊息與原有 ICD-9／CCS 重疊。是否在某些年齡或疾病子群較有用仍屬未驗證假設；本次子群表僅供探索。
 
-最早的 LR、RF、XGBoost 使用相同固定 holdout，**不是五折**。LR 由使用者提供 AUROC **0.6461**、AP **0.2194**、Precision **0.1818**、Recall **0.5072**、F1 **0.2677**、Brier **0.1020**，沒有可查的 log 或預測檔，故不能重建其模型選擇／門檻細節。RF 標準權重 AP **0.219298**、AUROC **0.647946**；RF balanced AP **0.205252**。XGBoost 標準權重 AP **0.229119**、AUROC **0.655925**；類別加權 AP **0.218236**。因此在這組早期流程中標準 XGBoost 的 AP 高於 LR／RF，加權沒有提高 AP。[RF 指標](results/rf_results/rf_metrics.csv)｜[XGBoost 指標](results/xgboost_results/xgb_metrics.csv)
+## 可以直接放入 Final Presentation 的文字
 
-在早期 XGBoost 上加入 AHRQ CCS 精確碼 AP **0.229160**，唯一 ICD 前綴擴充 AP **0.229820**；CDC 群組特徵 AP **0.227831**，CDC＋CCS 前綴 **0.229389**，差距小。SMOTENC 少數／多數比 0.20 的 AP **0.224612**，提高到 0.35／0.50／1.00 後 AP **0.213285／0.201799／0.194979**，未改善原 XGBoost。舊實驗 CSV 同時保留不同閾值策略的 Precision／Recall／F1、Accuracy、Brier 與混淆矩陣；AP/AUROC 不受同一預測分數的閾值改變。[CCS 前綴](results/xgboost_ccs_prefix_results/metrics.csv)｜[CDC](results/xgboost_cdc_results/metrics.csv)｜[SMOTENC 0.20](results/xgboost_smote_0.20/xgb_metrics.csv)
+> 在相同的 99,343 次就醫、69,990 位病人、seed 777 病人互斥五折下，Raw ICD-9 CatBoost 的平均 PR-AUC 為 0.246506；與 CCS HGB 固定 50/50 融合達 **0.247374**。不含 CCS 的 Raw HGB＋Raw CatBoost 融合為 **0.246225**。CDC、MEPS 與 CMS 均採真實外部資料；在各自同架構配對比較中，尚未確認它們能提升最高的 HGB＋CatBoost 基準。MEPS 30 天共同訓練對同架構神經網路有小幅正差；這與最佳融合模型的比較是不同問題。
 
-### 6.2 CDC 外部資料：人口風險、疾病對齊、編碼器與控制
+## 尚缺或不適用
 
-在後期出院特徵 XGBoost 五折中，Clinical 基線 AP **0.234919**；CDC 健康群組統計 AP **0.235256**（+0.000337），疾病對齊／診斷感知 AP **0.235090**。CDC 分布對齊 AP **0.234849**，沒有再提高。DiffWalk 真實／置換對照 AP **0.235084／0.235028**，兩者差距很小；編碼器實驗的 CDC 預訓練 AP **0.232009**，隨機編碼器 **0.232117**，不能將微小變化穩定歸因於外部訊號。CDC 來源辨識 AUROC **0.909635** 說明調查人口與醫院病人差異大；**這是 domain classifier 的分數，不是再住院 AUROC**。較早的 CDC proxy 單次 holdout 及 5-fold 結果保留在附錄，不與後期流程混排。[CDC 臨床](results/cdc_clinical_results/summary_mean_std.csv)｜[診斷感知](results/cdc_diagnosis_aware_results/summary_mean_std.csv)｜[來源辨識](results/cdc_domain_shift_analysis/domain_results.csv)
+無。
 
-類別不平衡比較的五折無重採樣 AP 約 **0.234825**；ROS **0.231277**、RUS **0.231955**、SMOTE **0.229811**、類別加權 **0.229549**。若以校準機率與 AP 為主，當時的重採樣／加權並未比原比例訓練更好。[20 組完整指標](results/cdc_ih_5fold_results/summary_mean_std.csv)
-
-### 6.3 MEPS 年度資料：直接特徵、縱向預訓練與多任務
-
-年度 MEPS 資料擴到 2008–2024 後有 **45,436 person-years、21,176 個相鄰年度配對**；早期 2008–2012 有 **4,458 個**。外部任務可預測次年 ER／住院／花費，但與 UCI 30 天再住院標籤有差異。人口／就醫風險 `Bridge8` 對較強 Clinical XGBoost 的五折 AP **0.234919 → 0.235585**；在 seed 2024、3407 也有小幅增加，但不能挑最有利 seed。Cell 分群與利用率直接特徵的最佳 AP 約 **0.235160／0.234983**。MEPS MLP 多任務在它自己的 MLP 基線 **0.222066** 下為 **0.223721**，不可拿這個絕對值判定比 XGBoost 家族差多少。[Bridge8](results/meps_bridge8_results/summary.csv)｜[Cell](results/meps_cell_results/summary.csv)｜[多任務](results/meps_multitask_results/summary.csv)
-
-另一組**較保守、較少臨床衍生特徵**流程的 Clinical XGBoost AP 約 **0.209917**，所以不能與上段 0.234919 當成同一 baseline。MEPS embedding＋XGBoost AP **0.209831**；巢狀調 embedding **0.208415**；年度縱向風險直接加入 XGBoost 約 **0.209080–0.209375**。2008–2012 縱向 MTL＋XGBoost 驗證集融合 AP **0.210155**，對 Clinical 的 pooled ΔAP +0.000275、95% CI **[−0.000284, +0.000896]**，不足以認定優於 Clinical；但真實外部標籤相對 shuffled 標籤的 matched ΔAP +0.001443、95% CI **[+0.000334, +0.002628]**，表示**有外部訊號，卻未穩定轉化成主任務改善**。資料擴至 2008–2016／2008–2024，AP **0.210137／0.210002**，沒有單調進步。[Embedding](results/meps_embedding_xgb_results/summary.csv)｜[縱向融合](results/meps_longitudinal_blend_results/summary.csv)｜[真實對 shuffled](results/meps_longitudinal_blend_results/external_signal_bootstrap.csv)
-
-### 6.4 MEPS 精確事件、CCS 分組與其他接法
-
-2008–2012 MEPS 精確日期的 ER／住院事件可形成更接近 30 天的外部標籤。單獨事件風險對 UCI 的 AP **0.111573**、AUROC **0.494876**，顯示跨域轉移很困難；事件直接融合 AP **0.209904**，也沒有超過相同流程 Clinical **0.209917**。年度＋事件多來源 MTL AP **0.209600**。這些是早期較保守特徵流程，不與後來 HGB 的 0.239 直接混排。[事件融合](results/meps_event_blend_results/summary.csv)｜[多來源](results/meps_multisource_blend_results/summary.csv)
-
-在較強的 HGB 出院流程中，先加入公開 AHRQ CCS 分組後，**CCS-only** AP **0.239179**；再用 MEPS 年度利用率＋群組為 **0.238943**，改成 MEPS 真實 30 天住院事件＋CCS 群組為 **0.239077**。後者與 CCS-only 差 **−0.000102**，配對病人 bootstrap 95% CI **[−0.001709, +0.001322]**。其他嘗試：soft prefix／階層群組 **0.237349**（shuffled 控制 0.234799，真實資料確有訊號）；擴充 MEPS 風險特徵 **0.236877**；domain-weighted residual **0.237102**；醫院／MEPS 群組率先驗 **0.237010／0.235659**；固定／門控排名校正 **0.238504／0.238734**；MEPS 擴年份 **0.238625**；加入 NHANES **0.237414**；兩者同加 **0.238111**，均未超過同流程 CCS-only。這些實驗的精確各指標、標準差與控制條件見附錄及來源檔。[事件 CCS](results/meps_event_ccs_group_hgb_seed777/summary.csv)｜[soft prefix](results/meps_event_ccs_soft_seed777/summary.csv)｜[真實外部來源比較](results/real_external_sources_hgb_seed777/summary.csv)
-
-HGB／MEPS XGBoost 的固定 50/50 融合 AP **0.237485**，內層驗證挑權重的融合 **0.237015**，沒有勝過 CCS-only HGB。另在三 seed OOF 預測先跨 seed 平均、再算**pooled AP** 的實驗，無外部資料 **0.237798**、有 MEPS **0.238312**，差 +0.000514，95% CI **[+0.000108, +0.000924]**；但有 MEPS 與 HGB 的 pooled AP **0.238323** 幾乎相同。這是一個較小但正向的外部資料訊號，**統計量不同，不能與最新五折平均 AP 直接排序**。[Nested HGB](results/meps_nested_hgb_blend_seed777/fold_mean_summary.csv)｜[三 seed pooled](results/meps_hgb_xgb_ensemble/summary.csv)
-
-### 6.5 MEPS＋NHANES 同時接入：群組統計與多任務學習
-
-這次在與最新主比較完全相同的 99,343 筆、seed 777 五折上，同時使用 **21,176 個 MEPS 連續年度配對**和 **1,747 位 NHANES 糖尿病受訪者**。群組法按年齡、性別、種族分層，對 MEPS 次年 ER／住院和 NHANES 過去一年住院各自計算 survey-weighted 平滑率，再合併各來源相對風險；沒有把不同時間窗的標籤直接混合。多任務法用共享人口特徵編碼器和來源專屬預測頭，先只用外部資料預訓練，再把輸出風險與表徵接到 UCI HGB；這是**外部資料的多任務預訓練，不是 UCI＋兩來源三域共同訓練**。兩方法均做 MEPS-only、NHANES-only 和 dual 消融，並與既有 CatBoost 原始 ICD-9 OOF 固定 50/50 融合。[方法](docs/dual_external_meps_nhanes.md)｜[完整六指標](results/meps_nhanes_dual_external_seed777/summary.csv)
-
-| 方法 | 五折平均 AP | AUROC | Brier |
-|---|---:|---:|---:|
-| CCS-only HGB | **0.239179** | **0.678333** | **0.095470** |
-| Grouping：MEPS／NHANES／dual | 0.237652／0.237939／**0.237757** | 0.678020／0.678102／0.677639 | 0.095536／0.095526／0.095551 |
-| Multitask：MEPS／NHANES／dual | 0.237703／0.237839／**0.238303** | 0.677568／0.677914／0.677964 | 0.095547／0.095541／0.095536 |
-| CCS-only HGB＋CatBoost 原始 ICD-9 | **0.247374** | **0.683446** | **0.095068** |
-| Grouping dual＋CatBoost | 0.246639 | 0.683150 | 0.095102 |
-| Multitask dual＋CatBoost | 0.246877 | 0.683299 | 0.095096 |
-
-Grouping dual 相對 CCS-only HGB 的配對 ΔAP **−0.001422**、95% CI **[−0.003072, +0.000049]**；multitask dual 為 **−0.000876**、CI **[−0.002436, +0.000313]**。Multitask dual 比它的兩個單來源模型平均 AP 略高，但相對 MEPS-only 的 +0.000600、CI **[−0.001059, +0.002080]**，相對 NHANES-only 的 +0.000464、CI **[−0.000950, +0.001719]**，均跨零。雙來源多任務＋CatBoost 對 CCS-only HGB＋CatBoost 的 ΔAP **−0.000496**、CI **[−0.001267, +0.000255]**。因此雙來源接法**沒有顯示穩定的最終 AP 增益**，既有最佳模型仍維持 0.247374；有外部資料的最高分仍是原 MEPS event-CCS HGB＋診斷家族 CatBoost 約 0.247140。[完整配對結果](results/meps_nhanes_dual_external_seed777/paired_ap_bootstrap.csv)
-
-### 6.6 尚無可列入正式排行榜的執行結果
-
-[修正版三折內層 CV](scripts/experiments/run_meps_ccs_hgb_inner_cv.py)有舊版輸出（CCS-only **0.237235**、MEPS **0.237369**），但舊程式的訓練輪數／早停口徑不同；修正後未有完成結果，不據此判定三折調參較差。[TabPFN 3.5 腳本](scripts/experiments/run_tabpfn35_meps.py)已有實作，沒有可核對的完整五折結果，不列入已完成模型比較。不能把「有程式」寫成「已驗證有效」。
-
-## 7. 報告與課程要求的建議表述
-
-專題在固定病人互斥五折上重跑了 Rajpoot 復現 HGB，與後續方法使用**相同資料列和折別**。主要指標 AP 從原復現 HGB **0.228703** 提升到最佳 CCS-only HGB＋CatBoost **0.247374**；若要求模型實際接入真實外部資料，MEPS HGB＋CatBoost 的最佳 AP 約 **0.247140**。SHAP 顯示模型的主要預測訊號是過去住院次數與出院去向；MEPS 群組再就醫特徵也進入前五。**然而 MEPS 版本相對相同 CatBoost 的 CCS-only 版本沒有額外 AP 增益證據**。文獻所報 0.237 使用另一個 80/20 測試協定；可報告數值差與同切分復現差，但不要把兩者混稱同測試集的勝負。
-
-## 8. 重現、資料來源與檔案索引
+## 重現命令
 
 ```bash
 cd /media/synology/G/314554044/diabetes_project
-python -m pip install -e '.[comparison]'
-
-# 驗證同一資料與五折；不訓練
-python scripts/experiments/run_paper_fair_comparison.py \
-  --audit-only --outdir results/paper_comparison_audit_seed777
-
-# 五折 CatBoost、HGB 重訓核對、六項指標、配對 bootstrap、SHAP
-python scripts/experiments/run_paper_fair_comparison.py \
-  --outdir results/paper_fair_comparison_seed777 \
-  --threads 8 --shap-sample 1000 --bootstrap 2000
-
-# 若已有 oof_all.csv.gz，只重建指標與 run.json，不重訓模型
-python scripts/experiments/run_paper_fair_comparison.py \
-  --report-only --bootstrap 0 --outdir results/paper_fair_comparison_seed777
+python scripts/experiments/run_final_catboost_ablation.py --ablations E1_no_number_inpatient E2_no_raw_diagnoses E3_no_all_diagnosis_derived --threads 8
+python scripts/experiments/complete_final_presentation.py --bootstrap 2000
 ```
 
-主要輸出：[五折摘要](results/paper_fair_comparison_seed777/summary.csv)、[各折六指標](results/paper_fair_comparison_seed777/fold_metrics.csv)、[配對差值](results/paper_fair_comparison_seed777/paired_ap_bootstrap.csv)、[SHAP 全域](results/paper_fair_comparison_seed777/shap_global.csv)、[SHAP 各折](results/paper_fair_comparison_seed777/shap_fold.csv)、[切分稽核](results/paper_fair_comparison_seed777/audit.json)、[執行設定](results/paper_fair_comparison_seed777/run.json)。完整五折逐筆 OOF `.csv.gz`、原始資料和模型權重可能不納入 Git；小型結果 CSV 供報告核對。程式來源：[比較腳本](scripts/experiments/run_paper_fair_comparison.py)、[共用特徵與 SHAP](src/diabetes_project/paper_comparison.py)、[復現專案](../Bhuvan_Rajpoot_SSRN/README.md)、[SHAP 延伸](../salim-ibrahim-2026-readmission/README.md)。
-
-## 9. 逐實驗完整指標
-
-以下表格直接取自每個已完成實驗的**摘要、逐折指標和 bootstrap**，保留原 CSV **每個欄位**，數值最多顯示六位小數。`AP_mean`、`PR_AUC_mean`、`mean` 等欄名遵循來源；對 `mean`／`std` 只有兩個數值欄的舊 HGB 摘要，其意義為五折 AP 平均／標準差。未記錄 Precision、Recall、F1 或 Brier 的實驗，不補假數字。早期指標表保留不同 split／threshold policy 和混淆矩陣，**相同模型在不同門檻列中的 AP/AUROC 不是不同模型**。重複方法保留供溯源，正式結論優先採用上文較新且同切分的結果。`meps_nested_hgb_blend_seed777` 的原 `patient_bootstrap.csv` 採 pooled OOF 口徑，判斷五折平均 AP 差異應優先看同目錄 `fold_stratified_patient_bootstrap.csv`。已完成實驗的 `partial_results.csv` 與逐折檔相同或是其子集，因此不重複列；未完成的 smoke／partial 執行單列並註明，不能併入正式五折排行榜。
-
-<!-- AUTO_METRICS_START -->
-
-### cdc_5fold_results
-
-早期 CDC 五折比較；含基線與外部健康訊號，與後期較完整臨床流程分開。
-
-來源：[原始指標](results/cdc_5fold_results/summary_mean_std.csv)；4 列、11 欄。
-
-| Experiment | AUROC_mean | AUROC_std | PR_AUC_AP_mean | PR_AUC_AP_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 0.675616 | 0.005169 | 0.229549 | 0.000758 | 0.216186 | 0.011030 | 0.437237 | 0.052003 | 0.287906 | 0.003767 |
-| E2_Bridge | 0.675832 | 0.005120 | 0.229588 | 0.001942 | 0.223126 | 0.008740 | 0.410017 | 0.035622 | 0.288228 | 0.005033 |
-| E3_CDC_All | 0.675418 | 0.005131 | 0.229947 | 0.001996 | 0.214401 | 0.007400 | 0.437510 | 0.034682 | 0.287162 | 0.003176 |
-| E4_CDC_Diabetes | 0.675918 | 0.005598 | 0.229737 | 0.001984 | 0.216543 | 0.014704 | 0.434235 | 0.061791 | 0.286627 | 0.003193 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_5fold_results/fold_results.csv)；20 列、13 欄。
-
-| Experiment | Fold | Seed | Train_Rows | Test_Rows | Test_Positive_Rate | Features | Threshold | AUROC | PR_AUC_AP | Precision | Recall | F1 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 1 | 777 | 79474 | 19869 | 0.113946 | 2432 | 0.540000 | 0.677647 | 0.229981 | 0.211224 | 0.478799 | 0.293131 |
-| E2_Bridge | 1 | 777 | 79474 | 19869 | 0.113946 | 2436 | 0.545000 | 0.678364 | 0.229913 | 0.212779 | 0.463339 | 0.291632 |
-| E3_CDC_All | 1 | 777 | 79474 | 19869 | 0.113946 | 2437 | 0.555000 | 0.677943 | 0.229616 | 0.219545 | 0.434629 | 0.291728 |
-| E4_CDC_Diabetes | 1 | 777 | 79474 | 19869 | 0.113946 | 2437 | 0.535000 | 0.678563 | 0.229156 | 0.206768 | 0.488516 | 0.290556 |
-| E1_Baseline | 2 | 777 | 79474 | 19869 | 0.113846 | 2418 | 0.565000 | 0.666518 | 0.229183 | 0.216109 | 0.408046 | 0.282565 |
-| E2_Bridge | 2 | 777 | 79474 | 19869 | 0.113846 | 2422 | 0.565000 | 0.666861 | 0.230063 | 0.219387 | 0.414235 | 0.286851 |
-| E3_CDC_All | 2 | 777 | 79474 | 19869 | 0.113846 | 2423 | 0.555000 | 0.666456 | 0.230507 | 0.211356 | 0.432803 | 0.284015 |
-| E4_CDC_Diabetes | 2 | 777 | 79474 | 19869 | 0.113846 | 2423 | 0.550000 | 0.666300 | 0.229294 | 0.209892 | 0.446508 | 0.285553 |
-| E1_Baseline | 3 | 777 | 79475 | 19868 | 0.113851 | 2430 | 0.565000 | 0.677653 | 0.228390 | 0.220512 | 0.411583 | 0.287168 |
-| E2_Bridge | 3 | 777 | 79475 | 19868 | 0.113851 | 2434 | 0.570000 | 0.676740 | 0.226364 | 0.219512 | 0.393899 | 0.281917 |
-| E3_CDC_All | 3 | 777 | 79475 | 19868 | 0.113851 | 2435 | 0.555000 | 0.676482 | 0.226849 | 0.212975 | 0.431034 | 0.285088 |
-| E4_CDC_Diabetes | 3 | 777 | 79475 | 19868 | 0.113851 | 2435 | 0.565000 | 0.676965 | 0.226933 | 0.219641 | 0.405393 | 0.284915 |
-| E1_Baseline | 4 | 777 | 79474 | 19869 | 0.113896 | 2434 | 0.530000 | 0.676870 | 0.230232 | 0.201658 | 0.505082 | 0.288236 |
-| E2_Bridge | 4 | 777 | 79474 | 19869 | 0.113896 | 2438 | 0.570000 | 0.677636 | 0.231644 | 0.229259 | 0.412726 | 0.294777 |
-| E3_CDC_All | 4 | 777 | 79474 | 19869 | 0.113896 | 2439 | 0.535000 | 0.676866 | 0.232332 | 0.204550 | 0.492709 | 0.289085 |
-| E4_CDC_Diabetes | 4 | 777 | 79474 | 19869 | 0.113896 | 2439 | 0.535000 | 0.676981 | 0.231756 | 0.205505 | 0.488290 | 0.289267 |
-| E1_Baseline | 5 | 777 | 79475 | 19868 | 0.113902 | 2421 | 0.580000 | 0.679391 | 0.229957 | 0.231427 | 0.382678 | 0.288426 |
-| E2_Bridge | 5 | 777 | 79475 | 19868 | 0.113902 | 2425 | 0.585000 | 0.679559 | 0.229959 | 0.234694 | 0.365886 | 0.285961 |
-| E3_CDC_All | 5 | 777 | 79475 | 19868 | 0.113902 | 2426 | 0.570000 | 0.679343 | 0.230433 | 0.223579 | 0.396376 | 0.285896 |
-| E4_CDC_Diabetes | 5 | 777 | 79475 | 19868 | 0.113902 | 2426 | 0.595000 | 0.680779 | 0.231544 | 0.240908 | 0.342466 | 0.282847 |
-
-### cdc_clinical_interpretability_results
-
-CDC 臨床特徵與可解釋性變體，檢查群組統計及特徵構造。
-
-來源：[原始指標](results/cdc_clinical_interpretability_results/summary.csv)；9 列、13 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 0.234825 | 0.001933 | 0.676851 | 0.005618 | 0.214922 | 0.011872 | 0.452978 | 0.054757 | 0.289849 | 0.003279 | 0.095689 | 0.000150 |
-| E2_Clinical | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.221075 | 0.004113 | 0.425836 | 0.033129 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| E4_Clinical_CDCHealth | 0.235256 | 0.001917 | 0.678403 | 0.006408 | 0.211719 | 0.009709 | 0.465705 | 0.032697 | 0.290461 | 0.005247 | 0.095640 | 0.000165 |
-| No_GenHlth | 0.234706 | 0.002666 | 0.677794 | 0.006507 | 0.211979 | 0.010565 | 0.456339 | 0.039988 | 0.288589 | 0.004252 | 0.095673 | 0.000197 |
-| No_PhysHlth | 0.234816 | 0.003121 | 0.677879 | 0.006557 | 0.209965 | 0.008603 | 0.476042 | 0.036652 | 0.290782 | 0.005175 | 0.095663 | 0.000202 |
-| No_DiffWalk | 0.234110 | 0.001901 | 0.677909 | 0.006399 | 0.212507 | 0.007289 | 0.460566 | 0.055689 | 0.289686 | 0.005369 | 0.095693 | 0.000156 |
-| Only_GenHlth | 0.234560 | 0.002627 | 0.678319 | 0.006977 | 0.216790 | 0.005906 | 0.447049 | 0.043784 | 0.291230 | 0.006049 | 0.095671 | 0.000215 |
-| Only_PhysHlth | 0.234338 | 0.002585 | 0.677868 | 0.007233 | 0.204930 | 0.012268 | 0.490009 | 0.048607 | 0.287834 | 0.006593 | 0.095687 | 0.000217 |
-| Only_DiffWalk | 0.235084 | 0.002896 | 0.678039 | 0.007303 | 0.217618 | 0.004605 | 0.434675 | 0.043891 | 0.289325 | 0.008116 | 0.095663 | 0.000232 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_clinical_interpretability_results/fold_results.csv)；45 列、12 欄。
-
-| Fold | Experiment | Features | Threshold | ValidationAP | TestRows | AP | AUROC | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | E1_Baseline | 2432 | 0.135000 | 0.226748 | 19869 | 0.237806 | 0.682138 | 0.212758 | 0.474382 | 0.293764 | 0.095499 |
-| 1 | E2_Clinical | 2456 | 0.140000 | 0.226817 | 19869 | 0.238132 | 0.683548 | 0.217391 | 0.452739 | 0.293738 | 0.095449 |
-| 1 | E4_Clinical_CDCHealth | 2459 | 0.135000 | 0.225334 | 19869 | 0.237792 | 0.683272 | 0.212410 | 0.482332 | 0.294936 | 0.095468 |
-| 1 | No_GenHlth | 2458 | 0.140000 | 0.224354 | 19869 | 0.238105 | 0.683156 | 0.215916 | 0.446996 | 0.291181 | 0.095461 |
-| 1 | No_PhysHlth | 2458 | 0.130000 | 0.224339 | 19869 | 0.238584 | 0.683055 | 0.207723 | 0.513251 | 0.295750 | 0.095446 |
-| 1 | No_DiffWalk | 2458 | 0.125000 | 0.224591 | 19869 | 0.236337 | 0.683542 | 0.201575 | 0.542845 | 0.293984 | 0.095527 |
-| 1 | Only_GenHlth | 2457 | 0.135000 | 0.225377 | 19869 | 0.238464 | 0.684523 | 0.214244 | 0.488958 | 0.297941 | 0.095411 |
-| 1 | Only_PhysHlth | 2457 | 0.130000 | 0.225667 | 19869 | 0.237790 | 0.684343 | 0.207386 | 0.515901 | 0.295846 | 0.095450 |
-| 1 | Only_DiffWalk | 2457 | 0.140000 | 0.224095 | 19869 | 0.239224 | 0.684210 | 0.216791 | 0.450530 | 0.292725 | 0.095399 |
-| 2 | E1_Baseline | 2418 | 0.140000 | 0.246465 | 19869 | 0.233844 | 0.667576 | 0.212002 | 0.451370 | 0.288500 | 0.095913 |
-| 2 | E2_Clinical | 2442 | 0.155000 | 0.247611 | 19869 | 0.232633 | 0.667082 | 0.223609 | 0.380195 | 0.281598 | 0.095966 |
-| 2 | E4_Clinical_CDCHealth | 2445 | 0.130000 | 0.246447 | 19869 | 0.233978 | 0.667278 | 0.196082 | 0.500000 | 0.281694 | 0.095904 |
-| 2 | No_GenHlth | 2444 | 0.135000 | 0.247330 | 19869 | 0.232647 | 0.666769 | 0.201168 | 0.472149 | 0.282129 | 0.095967 |
-| 2 | No_PhysHlth | 2444 | 0.135000 | 0.248409 | 19869 | 0.232621 | 0.666582 | 0.200978 | 0.472591 | 0.282021 | 0.095966 |
-| 2 | No_DiffWalk | 2444 | 0.150000 | 0.247510 | 19869 | 0.233228 | 0.667079 | 0.216965 | 0.401415 | 0.281681 | 0.095936 |
-| 2 | Only_GenHlth | 2443 | 0.150000 | 0.248048 | 19869 | 0.232471 | 0.666658 | 0.218116 | 0.399204 | 0.282099 | 0.095990 |
-| 2 | Only_PhysHlth | 2443 | 0.125000 | 0.248623 | 19869 | 0.231608 | 0.665850 | 0.189423 | 0.522546 | 0.278052 | 0.096027 |
-| 2 | Only_DiffWalk | 2443 | 0.155000 | 0.248862 | 19869 | 0.232061 | 0.665676 | 0.219423 | 0.369584 | 0.275362 | 0.096022 |
-| 3 | E1_Baseline | 2430 | 0.135000 | 0.229116 | 19868 | 0.233166 | 0.677745 | 0.209339 | 0.471706 | 0.289985 | 0.095718 |
-| 3 | E2_Clinical | 2454 | 0.150000 | 0.232554 | 19868 | 0.232634 | 0.678819 | 0.226680 | 0.407162 | 0.291225 | 0.095713 |
-| 3 | E4_Clinical_CDCHealth | 2457 | 0.145000 | 0.231447 | 19868 | 0.233249 | 0.679821 | 0.218020 | 0.433245 | 0.290070 | 0.095675 |
-| 3 | No_GenHlth | 2456 | 0.140000 | 0.231539 | 19868 | 0.231697 | 0.677918 | 0.210768 | 0.446508 | 0.286362 | 0.095758 |
-| 3 | No_PhysHlth | 2456 | 0.140000 | 0.230994 | 19868 | 0.231742 | 0.678474 | 0.214509 | 0.454907 | 0.291543 | 0.095753 |
-| 3 | No_DiffWalk | 2456 | 0.140000 | 0.230207 | 19868 | 0.232180 | 0.678454 | 0.211968 | 0.444739 | 0.287100 | 0.095742 |
-| 3 | Only_GenHlth | 2455 | 0.140000 | 0.230594 | 19868 | 0.231912 | 0.678148 | 0.213852 | 0.451813 | 0.290300 | 0.095749 |
-| 3 | Only_PhysHlth | 2455 | 0.140000 | 0.229202 | 19868 | 0.232168 | 0.677248 | 0.211032 | 0.446508 | 0.286606 | 0.095748 |
-| 3 | Only_DiffWalk | 2455 | 0.145000 | 0.231934 | 19868 | 0.232762 | 0.678287 | 0.218531 | 0.427498 | 0.289218 | 0.095715 |
-| 4 | E1_Baseline | 2434 | 0.130000 | 0.228803 | 19869 | 0.235723 | 0.676570 | 0.205050 | 0.505966 | 0.291831 | 0.095678 |
-| 4 | E2_Clinical | 2458 | 0.140000 | 0.230028 | 19869 | 0.237260 | 0.678997 | 0.217066 | 0.460893 | 0.295133 | 0.095593 |
-| 4 | E4_Clinical_CDCHealth | 2461 | 0.135000 | 0.230340 | 19869 | 0.236707 | 0.679585 | 0.210799 | 0.484755 | 0.293826 | 0.095599 |
-| 4 | No_GenHlth | 2460 | 0.130000 | 0.230677 | 19869 | 0.236588 | 0.679201 | 0.204189 | 0.512594 | 0.292044 | 0.095629 |
-| 4 | No_PhysHlth | 2460 | 0.130000 | 0.229125 | 19869 | 0.237732 | 0.679659 | 0.204164 | 0.511268 | 0.291803 | 0.095555 |
-| 4 | No_DiffWalk | 2460 | 0.135000 | 0.229726 | 19869 | 0.235955 | 0.678890 | 0.211100 | 0.487406 | 0.294605 | 0.095628 |
-| 4 | Only_GenHlth | 2459 | 0.135000 | 0.230008 | 19869 | 0.235542 | 0.679652 | 0.211319 | 0.490057 | 0.295300 | 0.095623 |
-| 4 | Only_PhysHlth | 2459 | 0.125000 | 0.228762 | 19869 | 0.235957 | 0.679621 | 0.196278 | 0.536014 | 0.287339 | 0.095618 |
-| 4 | Only_DiffWalk | 2459 | 0.135000 | 0.230163 | 19869 | 0.236444 | 0.679479 | 0.210417 | 0.490941 | 0.294578 | 0.095626 |
-| 5 | E1_Baseline | 2421 | 0.160000 | 0.246090 | 19868 | 0.233585 | 0.680227 | 0.235463 | 0.361467 | 0.285166 | 0.095640 |
-| 5 | E2_Clinical | 2445 | 0.145000 | 0.248920 | 19868 | 0.233936 | 0.682955 | 0.220628 | 0.428193 | 0.291210 | 0.095599 |
-| 5 | E4_Clinical_CDCHealth | 2448 | 0.145000 | 0.247663 | 19868 | 0.234556 | 0.682059 | 0.221283 | 0.428193 | 0.291780 | 0.095554 |
-| 5 | No_GenHlth | 2447 | 0.150000 | 0.247952 | 19868 | 0.234494 | 0.681926 | 0.227851 | 0.403447 | 0.291228 | 0.095551 |
-| 5 | No_PhysHlth | 2447 | 0.145000 | 0.247398 | 19868 | 0.233404 | 0.681624 | 0.222452 | 0.428193 | 0.292793 | 0.095597 |
-| 5 | No_DiffWalk | 2447 | 0.145000 | 0.247544 | 19868 | 0.232851 | 0.681582 | 0.220925 | 0.426425 | 0.291057 | 0.095630 |
-| 5 | Only_GenHlth | 2446 | 0.150000 | 0.247916 | 19868 | 0.234412 | 0.682612 | 0.226420 | 0.405214 | 0.290512 | 0.095584 |
-| 5 | Only_PhysHlth | 2446 | 0.145000 | 0.248830 | 19868 | 0.234169 | 0.682277 | 0.220531 | 0.429076 | 0.291329 | 0.095594 |
-| 5 | Only_DiffWalk | 2446 | 0.145000 | 0.248899 | 19868 | 0.234930 | 0.682542 | 0.222927 | 0.434821 | 0.294743 | 0.095554 |
-
-### cdc_clinical_results
-
-後期出院特徵的 Clinical XGBoost 基線與 CDC 健康風險特徵。
-
-來源：[原始指標](results/cdc_clinical_results/summary_mean_std.csv)；4 列、13 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 0.234825 | 0.001933 | 0.676851 | 0.005618 | 0.214922 | 0.011872 | 0.452978 | 0.054757 | 0.289849 | 0.003279 | 0.095689 | 0.000150 |
-| E2_Clinical | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.221075 | 0.004113 | 0.425836 | 0.033129 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| E3_Clinical_CDCScore | 0.234635 | 0.002835 | 0.678024 | 0.007327 | 0.212749 | 0.013991 | 0.460127 | 0.056285 | 0.289241 | 0.005758 | 0.095671 | 0.000230 |
-| E4_Clinical_CDCHealth | 0.235256 | 0.001917 | 0.678403 | 0.006408 | 0.211719 | 0.009709 | 0.465705 | 0.032697 | 0.290461 | 0.005247 | 0.095640 | 0.000165 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_clinical_results/fold_results.csv)；20 列、11 欄。
-
-| Fold | Experiment | Features | Threshold | ValidationAP | AP | AUROC | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | E1_Baseline | 2432 | 0.135000 | 0.226748 | 0.237806 | 0.682138 | 0.212758 | 0.474382 | 0.293764 | 0.095499 |
-| 1 | E2_Clinical | 2456 | 0.140000 | 0.226817 | 0.238132 | 0.683548 | 0.217391 | 0.452739 | 0.293738 | 0.095449 |
-| 1 | E3_Clinical_CDCScore | 2457 | 0.130000 | 0.225805 | 0.238886 | 0.684428 | 0.206976 | 0.513693 | 0.295065 | 0.095397 |
-| 1 | E4_Clinical_CDCHealth | 2459 | 0.135000 | 0.225334 | 0.237792 | 0.683272 | 0.212410 | 0.482332 | 0.294936 | 0.095468 |
-| 2 | E1_Baseline | 2418 | 0.140000 | 0.246465 | 0.233844 | 0.667576 | 0.212002 | 0.451370 | 0.288500 | 0.095913 |
-| 2 | E2_Clinical | 2442 | 0.155000 | 0.247611 | 0.232633 | 0.667082 | 0.223609 | 0.380195 | 0.281598 | 0.095966 |
-| 2 | E3_Clinical_CDCScore | 2443 | 0.135000 | 0.248320 | 0.231850 | 0.665857 | 0.199360 | 0.468170 | 0.279641 | 0.096011 |
-| 2 | E4_Clinical_CDCHealth | 2445 | 0.130000 | 0.246447 | 0.233978 | 0.667278 | 0.196082 | 0.500000 | 0.281694 | 0.095904 |
-| 3 | E1_Baseline | 2430 | 0.135000 | 0.229116 | 0.233166 | 0.677745 | 0.209339 | 0.471706 | 0.289985 | 0.095718 |
-| 3 | E2_Clinical | 2454 | 0.150000 | 0.232554 | 0.232634 | 0.678819 | 0.226680 | 0.407162 | 0.291225 | 0.095713 |
-| 3 | E3_Clinical_CDCScore | 2455 | 0.155000 | 0.230351 | 0.232257 | 0.677903 | 0.233665 | 0.384173 | 0.290587 | 0.095735 |
-| 3 | E4_Clinical_CDCHealth | 2457 | 0.145000 | 0.231447 | 0.233249 | 0.679821 | 0.218020 | 0.433245 | 0.290070 | 0.095675 |
-| 4 | E1_Baseline | 2434 | 0.130000 | 0.228803 | 0.235723 | 0.676570 | 0.205050 | 0.505966 | 0.291831 | 0.095678 |
-| 4 | E2_Clinical | 2458 | 0.140000 | 0.230028 | 0.237260 | 0.678997 | 0.217066 | 0.460893 | 0.295133 | 0.095593 |
-| 4 | E3_Clinical_CDCScore | 2459 | 0.130000 | 0.230096 | 0.235449 | 0.678922 | 0.203769 | 0.511268 | 0.291399 | 0.095668 |
-| 4 | E4_Clinical_CDCHealth | 2461 | 0.135000 | 0.230340 | 0.236707 | 0.679585 | 0.210799 | 0.484755 | 0.293826 | 0.095599 |
-| 5 | E1_Baseline | 2421 | 0.160000 | 0.246090 | 0.233585 | 0.680227 | 0.235463 | 0.361467 | 0.285166 | 0.095640 |
-| 5 | E2_Clinical | 2445 | 0.145000 | 0.248920 | 0.233936 | 0.682955 | 0.220628 | 0.428193 | 0.291210 | 0.095599 |
-| 5 | E3_Clinical_CDCScore | 2446 | 0.145000 | 0.249430 | 0.234735 | 0.683009 | 0.219977 | 0.423332 | 0.289513 | 0.095546 |
-| 5 | E4_Clinical_CDCHealth | 2448 | 0.145000 | 0.247663 | 0.234556 | 0.682059 | 0.221283 | 0.428193 | 0.291780 | 0.095554 |
-
-### cdc_comorbidity_results
-
-CDC 共病訊號不同表示方式的對照。
-
-來源：[原始指標](results/cdc_comorbidity_results/summary_mean_std.csv)；8 列、13 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Precision_mean | Precision_std | Recall_mean | Recall_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 0.234825 | 0.001933 | 0.676851 | 0.005618 | 0.289849 | 0.003279 | 0.214922 | 0.011872 | 0.452978 | 0.054757 | 0.095689 | 0.000150 |
-| E2_Bridge4 | 0.234671 | 0.000900 | 0.677202 | 0.005971 | 0.289653 | 0.003667 | 0.214929 | 0.012599 | 0.452790 | 0.061431 | 0.095686 | 0.000136 |
-| E3_Bridge6 | 0.234779 | 0.001707 | 0.677566 | 0.005578 | 0.289853 | 0.004403 | 0.213902 | 0.015025 | 0.458635 | 0.057573 | 0.095673 | 0.000145 |
-| E4_GenHlth | 0.234414 | 0.001429 | 0.677361 | 0.005897 | 0.289086 | 0.002548 | 0.213545 | 0.011553 | 0.453423 | 0.049153 | 0.095694 | 0.000147 |
-| E5_PhysHlth | 0.234476 | 0.001304 | 0.677225 | 0.005576 | 0.288050 | 0.003123 | 0.221577 | 0.014077 | 0.420624 | 0.063057 | 0.095691 | 0.000122 |
-| E6_Health | 0.234924 | 0.001005 | 0.677350 | 0.005659 | 0.291403 | 0.004554 | 0.214946 | 0.010867 | 0.455727 | 0.031355 | 0.095673 | 0.000121 |
-| E7_Socio | 0.234313 | 0.001208 | 0.676898 | 0.005916 | 0.290237 | 0.003964 | 0.218781 | 0.011419 | 0.436799 | 0.048164 | 0.095710 | 0.000133 |
-| E8_All_CDC | 0.234143 | 0.001811 | 0.676969 | 0.005487 | 0.289871 | 0.004201 | 0.218593 | 0.009659 | 0.434771 | 0.045533 | 0.095703 | 0.000144 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_comorbidity_results/fold_results.csv)；40 列、13 欄。
-
-| Fold | Experiment | Features | Threshold | ValidationAP | TestRows | PositiveRate | AP | AUROC | F1 | Precision | Recall | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | E1_Baseline | 2432 | 0.135000 | 0.226748 | 19869 | 0.113946 | 0.237806 | 0.682138 | 0.293764 | 0.212758 | 0.474382 | 0.095499 |
-| 1 | E2_Bridge4 | 2436 | 0.130000 | 0.226333 | 19869 | 0.113946 | 0.236156 | 0.682025 | 0.294753 | 0.207910 | 0.506184 | 0.095582 |
-| 1 | E3_Bridge6 | 2438 | 0.140000 | 0.226983 | 19869 | 0.113946 | 0.237147 | 0.682398 | 0.294313 | 0.218851 | 0.449205 | 0.095512 |
-| 1 | E4_GenHlth | 2439 | 0.145000 | 0.227377 | 19869 | 0.113946 | 0.236058 | 0.681732 | 0.290288 | 0.222773 | 0.416519 | 0.095577 |
-| 1 | E5_PhysHlth | 2439 | 0.145000 | 0.226044 | 19869 | 0.113946 | 0.235291 | 0.680931 | 0.291641 | 0.223610 | 0.419170 | 0.095625 |
-| 1 | E6_Health | 2441 | 0.145000 | 0.225823 | 19869 | 0.113946 | 0.236117 | 0.681155 | 0.294181 | 0.225465 | 0.423145 | 0.095591 |
-| 1 | E7_Socio | 2440 | 0.140000 | 0.227204 | 19869 | 0.113946 | 0.235834 | 0.681252 | 0.294639 | 0.219528 | 0.447880 | 0.095609 |
-| 1 | E8_All_CDC | 2443 | 0.145000 | 0.226321 | 19869 | 0.113946 | 0.236085 | 0.680913 | 0.290034 | 0.222854 | 0.415194 | 0.095600 |
-| 2 | E1_Baseline | 2418 | 0.140000 | 0.246465 | 19869 | 0.113846 | 0.233844 | 0.667576 | 0.288500 | 0.212002 | 0.451370 | 0.095913 |
-| 2 | E2_Bridge4 | 2422 | 0.145000 | 0.245650 | 19869 | 0.113846 | 0.233962 | 0.667147 | 0.285071 | 0.215762 | 0.419982 | 0.095903 |
-| 2 | E3_Bridge6 | 2424 | 0.130000 | 0.244361 | 19869 | 0.113846 | 0.233296 | 0.668138 | 0.283028 | 0.197516 | 0.499116 | 0.095892 |
-| 2 | E4_GenHlth | 2425 | 0.135000 | 0.244970 | 19869 | 0.113846 | 0.233292 | 0.667371 | 0.284833 | 0.204427 | 0.469496 | 0.095930 |
-| 2 | E5_PhysHlth | 2425 | 0.155000 | 0.243773 | 19869 | 0.113846 | 0.234435 | 0.667657 | 0.283858 | 0.227747 | 0.376658 | 0.095875 |
-| 2 | E6_Health | 2427 | 0.130000 | 0.244163 | 19869 | 0.113846 | 0.234416 | 0.667595 | 0.284234 | 0.198974 | 0.497347 | 0.095874 |
-| 2 | E7_Socio | 2426 | 0.140000 | 0.242781 | 19869 | 0.113846 | 0.233576 | 0.666754 | 0.284257 | 0.209176 | 0.443413 | 0.095926 |
-| 2 | E8_All_CDC | 2429 | 0.150000 | 0.243533 | 19869 | 0.113846 | 0.232398 | 0.667364 | 0.283058 | 0.219936 | 0.396994 | 0.095949 |
-| 3 | E1_Baseline | 2430 | 0.135000 | 0.229116 | 19868 | 0.113851 | 0.233166 | 0.677745 | 0.289985 | 0.209339 | 0.471706 | 0.095718 |
-| 3 | E2_Bridge4 | 2434 | 0.150000 | 0.229174 | 19868 | 0.113851 | 0.234557 | 0.677992 | 0.288953 | 0.226137 | 0.400088 | 0.095651 |
-| 3 | E3_Bridge6 | 2436 | 0.150000 | 0.229429 | 19868 | 0.113851 | 0.233044 | 0.678442 | 0.289436 | 0.225886 | 0.402741 | 0.095719 |
-| 3 | E4_GenHlth | 2437 | 0.145000 | 0.228950 | 19868 | 0.113851 | 0.232704 | 0.678136 | 0.290942 | 0.221099 | 0.425287 | 0.095732 |
-| 3 | E5_PhysHlth | 2437 | 0.150000 | 0.230114 | 19868 | 0.113851 | 0.232305 | 0.678129 | 0.290617 | 0.228039 | 0.400531 | 0.095746 |
-| 3 | E6_Health | 2439 | 0.135000 | 0.230740 | 19868 | 0.113851 | 0.233688 | 0.678837 | 0.290012 | 0.209107 | 0.473033 | 0.095675 |
-| 3 | E7_Socio | 2438 | 0.155000 | 0.230146 | 19868 | 0.113851 | 0.232890 | 0.677373 | 0.288852 | 0.231590 | 0.383731 | 0.095745 |
-| 3 | E8_All_CDC | 2441 | 0.140000 | 0.228757 | 19868 | 0.113851 | 0.232584 | 0.678827 | 0.289793 | 0.214000 | 0.448718 | 0.095714 |
-| 4 | E1_Baseline | 2434 | 0.130000 | 0.228803 | 19869 | 0.113896 | 0.235723 | 0.676570 | 0.291831 | 0.205050 | 0.505966 | 0.095678 |
-| 4 | E2_Bridge4 | 2438 | 0.125000 | 0.228768 | 19869 | 0.113896 | 0.233954 | 0.677452 | 0.287971 | 0.197472 | 0.531595 | 0.095726 |
-| 4 | E3_Bridge6 | 2440 | 0.125000 | 0.229258 | 19869 | 0.113896 | 0.235693 | 0.677919 | 0.289370 | 0.198361 | 0.534688 | 0.095660 |
-| 4 | E4_GenHlth | 2441 | 0.125000 | 0.229130 | 19869 | 0.113896 | 0.235545 | 0.677801 | 0.288620 | 0.197900 | 0.532921 | 0.095656 |
-| 4 | E5_PhysHlth | 2441 | 0.125000 | 0.228694 | 19869 | 0.113896 | 0.235648 | 0.677979 | 0.286982 | 0.196907 | 0.528944 | 0.095650 |
-| 4 | E6_Health | 2443 | 0.140000 | 0.229405 | 19869 | 0.113896 | 0.235782 | 0.677807 | 0.295905 | 0.218500 | 0.458241 | 0.095655 |
-| 4 | E7_Socio | 2442 | 0.130000 | 0.230379 | 19869 | 0.113896 | 0.235244 | 0.678180 | 0.292553 | 0.205472 | 0.507733 | 0.095656 |
-| 4 | E8_All_CDC | 2445 | 0.130000 | 0.229218 | 19869 | 0.113896 | 0.236037 | 0.677886 | 0.292360 | 0.205211 | 0.508175 | 0.095624 |
-| 5 | E1_Baseline | 2421 | 0.160000 | 0.246090 | 19868 | 0.113902 | 0.233585 | 0.680227 | 0.285166 | 0.235463 | 0.361467 | 0.095640 |
-| 5 | E2_Bridge4 | 2425 | 0.150000 | 0.247550 | 19868 | 0.113902 | 0.234723 | 0.681394 | 0.291515 | 0.227363 | 0.406098 | 0.095569 |
-| 5 | E3_Bridge6 | 2427 | 0.150000 | 0.247235 | 19868 | 0.113902 | 0.234716 | 0.680932 | 0.293117 | 0.228898 | 0.407424 | 0.095583 |
-| 5 | E4_GenHlth | 2428 | 0.145000 | 0.246938 | 19868 | 0.113902 | 0.234469 | 0.681765 | 0.290749 | 0.221528 | 0.422890 | 0.095573 |
-| 5 | E5_PhysHlth | 2428 | 0.155000 | 0.246099 | 19868 | 0.113902 | 0.234698 | 0.681429 | 0.287154 | 0.231582 | 0.377817 | 0.095561 |
-| 5 | E6_Health | 2430 | 0.145000 | 0.244870 | 19868 | 0.113902 | 0.234615 | 0.681357 | 0.292683 | 0.222683 | 0.426867 | 0.095569 |
-| 5 | E7_Socio | 2429 | 0.150000 | 0.246271 | 19868 | 0.113902 | 0.234022 | 0.680930 | 0.290886 | 0.228141 | 0.401237 | 0.095612 |
-| 5 | E8_All_CDC | 2432 | 0.150000 | 0.246229 | 19868 | 0.113902 | 0.233613 | 0.679854 | 0.294108 | 0.230963 | 0.404772 | 0.095629 |
-
-### cdc_diagnosis_aware_results
-
-CDC 診斷對齊及可靠性／社經變體。
-
-來源：[原始指標](results/cdc_diagnosis_aware_results/summary_mean_std.csv)；7 列、13 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 0.234825 | 0.001933 | 0.676851 | 0.005618 | 0.214922 | 0.011872 | 0.452978 | 0.054757 | 0.289849 | 0.003279 | 0.095689 | 0.000150 |
-| E2_Reliable4 | 0.234401 | 0.001184 | 0.677212 | 0.006304 | 0.213044 | 0.012327 | 0.461195 | 0.048353 | 0.290165 | 0.003636 | 0.095693 | 0.000154 |
-| E3_ReliableHealth | 0.234343 | 0.001027 | 0.677106 | 0.005921 | 0.217920 | 0.011775 | 0.433615 | 0.057030 | 0.288423 | 0.003073 | 0.095688 | 0.000129 |
-| E4_Bridge6 | 0.234877 | 0.001559 | 0.677508 | 0.005676 | 0.219591 | 0.010684 | 0.437157 | 0.043171 | 0.291282 | 0.002909 | 0.095679 | 0.000136 |
-| E5_NaiveHealth | 0.235246 | 0.001275 | 0.676976 | 0.005648 | 0.217931 | 0.012360 | 0.435999 | 0.059091 | 0.288823 | 0.005201 | 0.095664 | 0.000139 |
-| E6_DiagnosisAware | 0.235090 | 0.001645 | 0.677077 | 0.005583 | 0.219680 | 0.014841 | 0.438483 | 0.054071 | 0.290815 | 0.002984 | 0.095666 | 0.000132 |
-| E7_AwarePlus | 0.234401 | 0.001784 | 0.677100 | 0.005789 | 0.213853 | 0.014486 | 0.455979 | 0.052731 | 0.289450 | 0.005063 | 0.095691 | 0.000127 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_diagnosis_aware_results/fold_results.csv)；35 列、10 欄。
-
-| Fold | Experiment | Features | Threshold | AP | AUROC | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | E1_Baseline | 2432 | 0.135000 | 0.237806 | 0.682138 | 0.212758 | 0.474382 | 0.293764 | 0.095499 |
-| 1 | E2_Reliable4 | 2436 | 0.135000 | 0.235987 | 0.682014 | 0.212690 | 0.475265 | 0.293869 | 0.095569 |
-| 1 | E3_ReliableHealth | 2439 | 0.140000 | 0.235467 | 0.680164 | 0.216152 | 0.442138 | 0.290355 | 0.095618 |
-| 1 | E4_Bridge6 | 2438 | 0.145000 | 0.236418 | 0.682215 | 0.224418 | 0.421378 | 0.292863 | 0.095550 |
-| 1 | E5_NaiveHealth | 2441 | 0.140000 | 0.237115 | 0.680534 | 0.220166 | 0.446555 | 0.294924 | 0.095561 |
-| 1 | E6_DiagnosisAware | 2441 | 0.140000 | 0.236950 | 0.680707 | 0.218146 | 0.443905 | 0.292534 | 0.095550 |
-| 1 | E7_AwarePlus | 2443 | 0.135000 | 0.236045 | 0.681194 | 0.213050 | 0.473057 | 0.293787 | 0.095574 |
-| 2 | E1_Baseline | 2418 | 0.140000 | 0.233844 | 0.667576 | 0.212002 | 0.451370 | 0.288500 | 0.095913 |
-| 2 | E2_Reliable4 | 2422 | 0.135000 | 0.233416 | 0.666573 | 0.205371 | 0.469938 | 0.285830 | 0.095940 |
-| 2 | E3_ReliableHealth | 2425 | 0.150000 | 0.233906 | 0.666850 | 0.221123 | 0.395225 | 0.283584 | 0.095892 |
-| 2 | E4_Bridge6 | 2424 | 0.140000 | 0.233952 | 0.667753 | 0.210934 | 0.445181 | 0.286242 | 0.095904 |
-| 2 | E5_NaiveHealth | 2427 | 0.155000 | 0.234337 | 0.667122 | 0.224749 | 0.375774 | 0.281271 | 0.095891 |
-| 2 | E6_DiagnosisAware | 2427 | 0.130000 | 0.234484 | 0.667384 | 0.200071 | 0.500884 | 0.285931 | 0.095860 |
-| 2 | E7_AwarePlus | 2429 | 0.130000 | 0.233710 | 0.666913 | 0.195880 | 0.496021 | 0.280851 | 0.095896 |
-| 3 | E1_Baseline | 2430 | 0.135000 | 0.233166 | 0.677745 | 0.209339 | 0.471706 | 0.289985 | 0.095718 |
-| 3 | E2_Reliable4 | 2434 | 0.145000 | 0.233078 | 0.677790 | 0.219714 | 0.421751 | 0.288916 | 0.095715 |
-| 3 | E3_ReliableHealth | 2437 | 0.150000 | 0.232802 | 0.678507 | 0.225050 | 0.398762 | 0.287719 | 0.095717 |
-| 3 | E4_Bridge6 | 2436 | 0.150000 | 0.233407 | 0.678779 | 0.227908 | 0.403625 | 0.291321 | 0.095700 |
-| 3 | E5_NaiveHealth | 2439 | 0.150000 | 0.233812 | 0.679129 | 0.226897 | 0.400531 | 0.289688 | 0.095668 |
-| 3 | E6_DiagnosisAware | 2439 | 0.155000 | 0.232691 | 0.677963 | 0.234528 | 0.381963 | 0.290616 | 0.095741 |
-| 3 | E7_AwarePlus | 2441 | 0.155000 | 0.232013 | 0.679331 | 0.232483 | 0.382847 | 0.289293 | 0.095724 |
-| 4 | E1_Baseline | 2434 | 0.130000 | 0.235723 | 0.676570 | 0.205050 | 0.505966 | 0.291831 | 0.095678 |
-| 4 | E2_Reliable4 | 2438 | 0.125000 | 0.234999 | 0.677777 | 0.197857 | 0.530270 | 0.288184 | 0.095682 |
-| 4 | E3_ReliableHealth | 2441 | 0.125000 | 0.234655 | 0.678145 | 0.198576 | 0.529828 | 0.288881 | 0.095664 |
-| 4 | E4_Bridge6 | 2440 | 0.130000 | 0.236712 | 0.678217 | 0.205536 | 0.508617 | 0.292764 | 0.095612 |
-| 4 | E5_NaiveHealth | 2443 | 0.125000 | 0.235571 | 0.677532 | 0.196335 | 0.530270 | 0.286567 | 0.095659 |
-| 4 | E6_DiagnosisAware | 2443 | 0.135000 | 0.236206 | 0.678372 | 0.211561 | 0.480336 | 0.293744 | 0.095620 |
-| 4 | E7_AwarePlus | 2445 | 0.130000 | 0.236304 | 0.678285 | 0.204744 | 0.507291 | 0.291741 | 0.095628 |
-| 5 | E1_Baseline | 2421 | 0.160000 | 0.233585 | 0.680227 | 0.235463 | 0.361467 | 0.285166 | 0.095640 |
-| 5 | E2_Reliable4 | 2425 | 0.150000 | 0.234525 | 0.681907 | 0.229586 | 0.408749 | 0.294024 | 0.095561 |
-| 5 | E3_ReliableHealth | 2428 | 0.150000 | 0.234884 | 0.681863 | 0.228701 | 0.402121 | 0.291573 | 0.095550 |
-| 5 | E4_Bridge6 | 2427 | 0.150000 | 0.233895 | 0.680578 | 0.229161 | 0.406982 | 0.293219 | 0.095630 |
-| 5 | E5_NaiveHealth | 2430 | 0.145000 | 0.235395 | 0.680563 | 0.221509 | 0.426867 | 0.291667 | 0.095542 |
-| 5 | E6_DiagnosisAware | 2430 | 0.155000 | 0.235120 | 0.680959 | 0.234094 | 0.385329 | 0.291249 | 0.095562 |
-| 5 | E7_AwarePlus | 2432 | 0.145000 | 0.233935 | 0.679773 | 0.223108 | 0.420681 | 0.291577 | 0.095633 |
-
-### cdc_diffwalk_control_results
-
-真實 CDC 特徵對置換訊號的控制實驗。
-
-來源：[原始指標](results/cdc_diffwalk_control_results/summary.csv)；4 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| CDC_DiffWalk | 0.235084 | 0.002896 | 0.678039 | 0.007303 | 0.289325 | 0.008116 | 0.095663 | 0.000232 |
-| Permuted_DiffWalk | 0.235028 | 0.002746 | 0.678541 | 0.007167 | 0.290548 | 0.005422 | 0.095662 | 0.000227 |
-| CDC_AllHealth | 0.235256 | 0.001917 | 0.678403 | 0.006408 | 0.290461 | 0.005247 | 0.095640 | 0.000165 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_diffwalk_control_results/fold_results.csv)；20 列、7 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 0.238132 | 0.683548 | 0.293738 | 0.095449 | 0.140000 |
-| 1 | CDC_DiffWalk | 0.239224 | 0.684210 | 0.292725 | 0.095399 | 0.140000 |
-| 1 | Permuted_DiffWalk | 0.238691 | 0.684519 | 0.295602 | 0.095424 | 0.150000 |
-| 1 | CDC_AllHealth | 0.237792 | 0.683272 | 0.294936 | 0.095468 | 0.135000 |
-| 2 | Clinical | 0.232633 | 0.667082 | 0.281598 | 0.095966 | 0.155000 |
-| 2 | CDC_DiffWalk | 0.232061 | 0.665676 | 0.275362 | 0.096022 | 0.155000 |
-| 2 | Permuted_DiffWalk | 0.231932 | 0.666443 | 0.281481 | 0.096023 | 0.135000 |
-| 2 | CDC_AllHealth | 0.233978 | 0.667278 | 0.281694 | 0.095904 | 0.130000 |
-| 3 | Clinical | 0.232634 | 0.678819 | 0.291225 | 0.095713 | 0.150000 |
-| 3 | CDC_DiffWalk | 0.232762 | 0.678287 | 0.289218 | 0.095715 | 0.145000 |
-| 3 | Permuted_DiffWalk | 0.232824 | 0.678892 | 0.290185 | 0.095712 | 0.140000 |
-| 3 | CDC_AllHealth | 0.233249 | 0.679821 | 0.290070 | 0.095675 | 0.145000 |
-| 4 | Clinical | 0.237260 | 0.678997 | 0.295133 | 0.095593 | 0.140000 |
-| 4 | CDC_DiffWalk | 0.236444 | 0.679479 | 0.294578 | 0.095626 | 0.135000 |
-| 4 | Permuted_DiffWalk | 0.236535 | 0.679608 | 0.292994 | 0.095600 | 0.135000 |
-| 4 | CDC_AllHealth | 0.236707 | 0.679585 | 0.293826 | 0.095599 | 0.135000 |
-| 5 | Clinical | 0.233936 | 0.682955 | 0.291210 | 0.095599 | 0.145000 |
-| 5 | CDC_DiffWalk | 0.234930 | 0.682542 | 0.294743 | 0.095554 | 0.145000 |
-| 5 | Permuted_DiffWalk | 0.235157 | 0.683241 | 0.292477 | 0.095551 | 0.145000 |
-| 5 | CDC_AllHealth | 0.234556 | 0.682059 | 0.291780 | 0.095554 | 0.145000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/cdc_diffwalk_control_results/patient_bootstrap.csv)；5 列、7 欄。
-
-| Comparison | PooledOOF_DeltaAP | BootstrapMean | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- | --- |
-| CDC_DiffWalk - Clinical | -0.000057 | -0.000052 | -0.001079 | 0.000991 | 0.475000 | 400 |
-| Permuted_DiffWalk - Clinical | 0.000056 | 0.000059 | -0.000722 | 0.000780 | 0.592500 | 400 |
-| CDC_DiffWalk - Permuted_DiffWalk | -0.000112 | -0.000083 | -0.000920 | 0.000873 | 0.435000 | 400 |
-| CDC_AllHealth - Clinical | 0.000255 | 0.000277 | -0.000816 | 0.001363 | 0.707500 | 400 |
-| CDC_AllHealth - CDC_DiffWalk | 0.000312 | 0.000302 | -0.000564 | 0.001218 | 0.772500 | 400 |
-
-### cdc_distribution_alignment_results
-
-CDC 與醫院資料的分布對齊和來源差異處理。
-
-來源：[原始指標](results/cdc_distribution_alignment_results/summary_mean_std.csv)；5 列、13 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 0.234825 | 0.001933 | 0.676851 | 0.005618 | 0.214922 | 0.011872 | 0.452978 | 0.054757 | 0.289849 | 0.003279 | 0.095689 | 0.000150 |
-| E2_Bridge6 | 0.234779 | 0.001707 | 0.677566 | 0.005578 | 0.213902 | 0.015025 | 0.458635 | 0.057573 | 0.289853 | 0.004403 | 0.095673 | 0.000145 |
-| E3_CDC_Health | 0.234924 | 0.001005 | 0.677350 | 0.005659 | 0.214946 | 0.010867 | 0.455727 | 0.031355 | 0.291403 | 0.004554 | 0.095673 | 0.000121 |
-| E4_Aligned_Health | 0.234849 | 0.001504 | 0.677049 | 0.005711 | 0.219511 | 0.014680 | 0.427601 | 0.065727 | 0.287714 | 0.005256 | 0.095684 | 0.000147 |
-| E5_Aligned_All | 0.233934 | 0.001949 | 0.677015 | 0.005321 | 0.217869 | 0.009027 | 0.432914 | 0.045626 | 0.288858 | 0.004874 | 0.095721 | 0.000137 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_distribution_alignment_results/fold_results.csv)；25 列、13 欄。
-
-| Fold | Experiment | TrainRows | TestRows | Features | Threshold | Val_AP | AP | AUROC | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | E1_Baseline | 79474 | 19869 | 2432 | 0.135000 | 0.226748 | 0.237806 | 0.682138 | 0.212758 | 0.474382 | 0.293764 | 0.095499 |
-| 1 | E2_Bridge6 | 79474 | 19869 | 2438 | 0.140000 | 0.226983 | 0.237147 | 0.682398 | 0.218851 | 0.449205 | 0.294313 | 0.095512 |
-| 1 | E3_CDC_Health | 79474 | 19869 | 2441 | 0.145000 | 0.225823 | 0.236117 | 0.681155 | 0.225465 | 0.423145 | 0.294181 | 0.095591 |
-| 1 | E4_Aligned_Health | 79474 | 19869 | 2441 | 0.140000 | 0.226553 | 0.237139 | 0.681207 | 0.219745 | 0.448322 | 0.294930 | 0.095534 |
-| 1 | E5_Aligned_All | 79474 | 19869 | 2443 | 0.145000 | 0.227477 | 0.235665 | 0.680930 | 0.223374 | 0.418728 | 0.291334 | 0.095603 |
-| 2 | E1_Baseline | 79474 | 19869 | 2418 | 0.140000 | 0.246465 | 0.233844 | 0.667576 | 0.212002 | 0.451370 | 0.288500 | 0.095913 |
-| 2 | E2_Bridge6 | 79474 | 19869 | 2424 | 0.130000 | 0.244361 | 0.233296 | 0.668138 | 0.197516 | 0.499116 | 0.283028 | 0.095892 |
-| 2 | E3_CDC_Health | 79474 | 19869 | 2427 | 0.130000 | 0.244163 | 0.234416 | 0.667595 | 0.198974 | 0.497347 | 0.284234 | 0.095874 |
-| 2 | E4_Aligned_Health | 79474 | 19869 | 2427 | 0.150000 | 0.245267 | 0.234348 | 0.667095 | 0.219686 | 0.395668 | 0.282513 | 0.095919 |
-| 2 | E5_Aligned_All | 79474 | 19869 | 2429 | 0.150000 | 0.242911 | 0.233262 | 0.667753 | 0.218097 | 0.392131 | 0.280297 | 0.095937 |
-| 3 | E1_Baseline | 79475 | 19868 | 2430 | 0.135000 | 0.229116 | 0.233166 | 0.677745 | 0.209339 | 0.471706 | 0.289985 | 0.095718 |
-| 3 | E2_Bridge6 | 79475 | 19868 | 2436 | 0.150000 | 0.229429 | 0.233044 | 0.678442 | 0.225886 | 0.402741 | 0.289436 | 0.095719 |
-| 3 | E3_CDC_Health | 79475 | 19868 | 2439 | 0.135000 | 0.230740 | 0.233688 | 0.678837 | 0.209107 | 0.473033 | 0.290012 | 0.095675 |
-| 3 | E4_Aligned_Health | 79475 | 19868 | 2439 | 0.160000 | 0.230021 | 0.233189 | 0.678836 | 0.235363 | 0.357206 | 0.283758 | 0.095704 |
-| 3 | E5_Aligned_All | 79475 | 19868 | 2441 | 0.140000 | 0.228956 | 0.231523 | 0.678637 | 0.214499 | 0.444739 | 0.289413 | 0.095776 |
-| 4 | E1_Baseline | 79474 | 19869 | 2434 | 0.130000 | 0.228803 | 0.235723 | 0.676570 | 0.205050 | 0.505966 | 0.291831 | 0.095678 |
-| 4 | E2_Bridge6 | 79474 | 19869 | 2440 | 0.125000 | 0.229258 | 0.235693 | 0.677919 | 0.198361 | 0.534688 | 0.289370 | 0.095660 |
-| 4 | E3_CDC_Health | 79474 | 19869 | 2443 | 0.140000 | 0.229405 | 0.235782 | 0.677807 | 0.218500 | 0.458241 | 0.295905 | 0.095655 |
-| 4 | E4_Aligned_Health | 79474 | 19869 | 2443 | 0.125000 | 0.229379 | 0.235414 | 0.677858 | 0.195915 | 0.529828 | 0.286055 | 0.095675 |
-| 4 | E5_Aligned_All | 79474 | 19869 | 2445 | 0.130000 | 0.229280 | 0.236195 | 0.677753 | 0.204826 | 0.506407 | 0.291677 | 0.095643 |
-| 5 | E1_Baseline | 79475 | 19868 | 2421 | 0.160000 | 0.246090 | 0.233585 | 0.680227 | 0.235463 | 0.361467 | 0.285166 | 0.095640 |
-| 5 | E2_Bridge6 | 79475 | 19868 | 2427 | 0.150000 | 0.247235 | 0.234716 | 0.680932 | 0.228898 | 0.407424 | 0.293117 | 0.095583 |
-| 5 | E3_CDC_Health | 79475 | 19868 | 2430 | 0.145000 | 0.244870 | 0.234615 | 0.681357 | 0.222683 | 0.426867 | 0.292683 | 0.095569 |
-| 5 | E4_Aligned_Health | 79475 | 19868 | 2430 | 0.150000 | 0.246982 | 0.234156 | 0.680250 | 0.226847 | 0.406982 | 0.291317 | 0.095589 |
-| 5 | E5_Aligned_All | 79475 | 19868 | 2432 | 0.150000 | 0.244361 | 0.233026 | 0.680005 | 0.228550 | 0.402563 | 0.291567 | 0.095647 |
-
-### cdc_domain_shift_analysis
-
-辨識資料來自 CDC 或醫院的 domain shift；這裡的 AUROC 不是再住院 AUROC。
-
-來源：[原始指標](results/cdc_domain_shift_analysis/domain_results.csv)；130 列、8 欄。
-
-| Scope | Seed | Configuration | AUC | CDC_Train_N | Hospital_Train_N | CDC_Test_N | Hospital_Test_N |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Patient | 777 | Full | 0.909635 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Only_bridge_age | 0.541646 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Without_bridge_age | 0.903667 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Only_bridge_sex | 0.506153 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Without_bridge_sex | 0.909414 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Only_bridge_high_bp | 0.782603 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Without_bridge_high_bp | 0.845503 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Only_bridge_high_chol | 0.823762 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Without_bridge_high_chol | 0.801997 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Only_bridge_stroke | 0.518317 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Without_bridge_stroke | 0.909678 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Only_bridge_heart_disease | 0.519802 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 777 | Without_bridge_heart_disease | 0.907786 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Full | 0.905375 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Only_bridge_age | 0.532941 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Without_bridge_age | 0.900662 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Only_bridge_sex | 0.501273 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Without_bridge_sex | 0.905853 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Only_bridge_high_bp | 0.777157 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Without_bridge_high_bp | 0.838267 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Only_bridge_high_chol | 0.819024 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Without_bridge_high_chol | 0.794958 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Only_bridge_stroke | 0.519873 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Without_bridge_stroke | 0.905213 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Only_bridge_heart_disease | 0.519590 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 778 | Without_bridge_heart_disease | 0.903316 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Full | 0.906466 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Only_bridge_age | 0.534324 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Without_bridge_age | 0.899127 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Only_bridge_sex | 0.498798 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Without_bridge_sex | 0.906134 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Only_bridge_high_bp | 0.777298 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Without_bridge_high_bp | 0.843014 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Only_bridge_high_chol | 0.820226 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Without_bridge_high_chol | 0.795379 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Only_bridge_stroke | 0.516973 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Without_bridge_stroke | 0.906491 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Only_bridge_heart_disease | 0.521429 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 779 | Without_bridge_heart_disease | 0.904704 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Full | 0.903978 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Only_bridge_age | 0.530857 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Without_bridge_age | 0.898954 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Only_bridge_sex | 0.503041 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Without_bridge_sex | 0.903290 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Only_bridge_high_bp | 0.774045 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Without_bridge_high_bp | 0.841755 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Only_bridge_high_chol | 0.821641 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Without_bridge_high_chol | 0.790590 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Only_bridge_stroke | 0.521075 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Without_bridge_stroke | 0.903938 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Only_bridge_heart_disease | 0.524965 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 780 | Without_bridge_heart_disease | 0.902520 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Full | 0.902617 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Only_bridge_age | 0.531953 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Without_bridge_age | 0.896830 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Only_bridge_sex | 0.501132 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Without_bridge_sex | 0.902831 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Only_bridge_high_bp | 0.768741 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Without_bridge_high_bp | 0.836427 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Only_bridge_high_chol | 0.820792 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Without_bridge_high_chol | 0.785922 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Only_bridge_stroke | 0.520297 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Without_bridge_stroke | 0.902399 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Only_bridge_heart_disease | 0.521358 | 28276 | 28276 | 7070 | 7070 |
-| Patient | 781 | Without_bridge_heart_disease | 0.900727 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Full | 0.912904 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Only_bridge_age | 0.546966 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Without_bridge_age | 0.904279 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Only_bridge_sex | 0.511457 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Without_bridge_sex | 0.910819 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Only_bridge_high_bp | 0.784653 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Without_bridge_high_bp | 0.842117 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Only_bridge_high_chol | 0.825743 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Without_bridge_high_chol | 0.807243 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Only_bridge_stroke | 0.518883 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Without_bridge_stroke | 0.913727 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Only_bridge_heart_disease | 0.528076 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 777 | Without_bridge_heart_disease | 0.911403 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Full | 0.907058 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Only_bridge_age | 0.536324 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Without_bridge_age | 0.901363 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Only_bridge_sex | 0.508557 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Without_bridge_sex | 0.905385 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Only_bridge_high_bp | 0.774257 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Without_bridge_high_bp | 0.841012 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Only_bridge_high_chol | 0.822207 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Without_bridge_high_chol | 0.795645 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Only_bridge_stroke | 0.521782 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Without_bridge_stroke | 0.905955 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Only_bridge_heart_disease | 0.524470 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 778 | Without_bridge_heart_disease | 0.906180 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Full | 0.910754 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Only_bridge_age | 0.531364 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Without_bridge_age | 0.902633 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Only_bridge_sex | 0.500566 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Without_bridge_sex | 0.908484 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Only_bridge_high_bp | 0.782178 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Without_bridge_high_bp | 0.844059 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Only_bridge_high_chol | 0.822772 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Without_bridge_high_chol | 0.802106 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Only_bridge_stroke | 0.517468 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Without_bridge_stroke | 0.910894 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Only_bridge_heart_disease | 0.525530 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 779 | Without_bridge_heart_disease | 0.909240 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Full | 0.907568 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Only_bridge_age | 0.532984 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Without_bridge_age | 0.900372 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Only_bridge_sex | 0.504809 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Without_bridge_sex | 0.906419 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Only_bridge_high_bp | 0.780339 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Without_bridge_high_bp | 0.844543 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Only_bridge_high_chol | 0.822843 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Without_bridge_high_chol | 0.800181 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Only_bridge_stroke | 0.525106 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Without_bridge_stroke | 0.907391 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Only_bridge_heart_disease | 0.527581 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 780 | Without_bridge_heart_disease | 0.907117 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Full | 0.904791 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Only_bridge_age | 0.535171 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Without_bridge_age | 0.899802 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Only_bridge_sex | 0.500990 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Without_bridge_sex | 0.905373 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Only_bridge_high_bp | 0.771499 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Without_bridge_high_bp | 0.838010 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Only_bridge_high_chol | 0.823975 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Without_bridge_high_chol | 0.788248 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Only_bridge_stroke | 0.520297 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Without_bridge_stroke | 0.904528 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Only_bridge_heart_disease | 0.523126 | 28276 | 28276 | 7070 | 7070 |
-| Encounter | 781 | Without_bridge_heart_disease | 0.906899 | 28276 | 28276 | 7070 | 7070 |
-
-### cdc_encoder_control_results
-
-CDC 預訓練編碼器、隨機控制與重採樣組合。
-
-來源：[原始指標](results/cdc_encoder_control_results/summary_mean_std.csv)；12 列、14 欄。
-
-| FeatureSet | IH | AP_mean | AP_std | AUROC_mean | AUROC_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Bridge | — | 0.232240 | 0.003523 | 0.676257 | 0.005886 | 0.224300 | 0.017377 | 0.410454 | 0.068535 | 0.286932 | 0.004926 | 0.095789 | 0.000211 |
-| Bridge | ClassWeight2 | 0.231605 | 0.003624 | 0.676319 | 0.005656 | 0.213830 | 0.017067 | 0.454222 | 0.059956 | 0.288439 | 0.003569 | 0.103337 | 0.000543 |
-| Bridge | ClassWeight4 | 0.230525 | 0.004525 | 0.676179 | 0.005429 | 0.214911 | 0.016107 | 0.453075 | 0.058174 | 0.289343 | 0.003539 | 0.139456 | 0.000878 |
-| Bridge | SMOTENC | 0.221204 | 0.004402 | 0.665722 | 0.004768 | 0.209831 | 0.008301 | 0.436978 | 0.036621 | 0.282771 | 0.001985 | 0.096629 | 0.000265 |
-| RandomEncoder | — | 0.232117 | 0.003825 | 0.676289 | 0.006119 | 0.217220 | 0.019379 | 0.437148 | 0.082149 | 0.286181 | 0.005375 | 0.095794 | 0.000235 |
-| RandomEncoder | ClassWeight2 | 0.231633 | 0.004851 | 0.676147 | 0.006034 | 0.213808 | 0.015106 | 0.448465 | 0.061519 | 0.287395 | 0.004742 | 0.103313 | 0.000594 |
-| RandomEncoder | ClassWeight4 | 0.230209 | 0.003902 | 0.675919 | 0.005799 | 0.214256 | 0.013802 | 0.448111 | 0.058143 | 0.288047 | 0.003348 | 0.139401 | 0.000913 |
-| RandomEncoder | SMOTENC | 0.222964 | 0.005164 | 0.666958 | 0.005677 | 0.207860 | 0.006932 | 0.446791 | 0.022438 | 0.283401 | 0.003177 | 0.096536 | 0.000334 |
-| CDCPretrained | — | 0.232009 | 0.004103 | 0.675971 | 0.006136 | 0.217232 | 0.009966 | 0.429993 | 0.048963 | 0.287444 | 0.004901 | 0.095807 | 0.000223 |
-| CDCPretrained | ClassWeight2 | 0.231487 | 0.004203 | 0.676223 | 0.006089 | 0.219118 | 0.010004 | 0.438039 | 0.042125 | 0.291067 | 0.003546 | 0.103309 | 0.000591 |
-| CDCPretrained | ClassWeight4 | 0.230378 | 0.004702 | 0.676047 | 0.005665 | 0.216691 | 0.013739 | 0.445029 | 0.054819 | 0.289674 | 0.002617 | 0.139361 | 0.000957 |
-| CDCPretrained | SMOTENC | 0.220695 | 0.002911 | 0.664874 | 0.004765 | 0.207098 | 0.014185 | 0.439357 | 0.057900 | 0.279347 | 0.003142 | 0.096726 | 0.000221 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_encoder_control_results/fold_results.csv)；60 列、14 欄。
-
-| Fold | FeatureSet | IH | Threshold | Features | TrainRows | TestRows | PositiveRate | AP | AUROC | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Bridge | — | 0.140000 | 352 | 79474 | 19869 | 0.113946 | 0.234616 | 0.681432 | 0.215736 | 0.450530 | 0.291762 | 0.095619 |
-| 1 | Bridge | ClassWeight2 | 0.245000 | 352 | 79474 | 19869 | 0.113946 | 0.234187 | 0.680797 | 0.215019 | 0.443905 | 0.289709 | 0.102924 |
-| 1 | Bridge | ClassWeight4 | 0.395000 | 352 | 79474 | 19869 | 0.113946 | 0.232526 | 0.681100 | 0.217285 | 0.431979 | 0.289135 | 0.138680 |
-| 1 | Bridge | SMOTENC | 0.160000 | 352 | 91551 | 19869 | 0.113946 | 0.226705 | 0.669887 | 0.214254 | 0.428887 | 0.285756 | 0.096328 |
-| 1 | RandomEncoder | — | 0.135000 | 364 | 79474 | 19869 | 0.113946 | 0.235850 | 0.682567 | 0.212612 | 0.481007 | 0.294882 | 0.095550 |
-| 1 | RandomEncoder | ClassWeight2 | 0.235000 | 364 | 79474 | 19869 | 0.113946 | 0.234522 | 0.681793 | 0.211013 | 0.484099 | 0.293913 | 0.102806 |
-| 1 | RandomEncoder | ClassWeight4 | 0.380000 | 364 | 79474 | 19869 | 0.113946 | 0.232794 | 0.681084 | 0.211089 | 0.479240 | 0.293085 | 0.138676 |
-| 1 | RandomEncoder | SMOTENC | 0.155000 | 364 | 91551 | 19869 | 0.113946 | 0.227165 | 0.670842 | 0.210926 | 0.441696 | 0.285510 | 0.096264 |
-| 1 | CDCPretrained | — | 0.140000 | 364 | 79474 | 19869 | 0.113946 | 0.235491 | 0.682403 | 0.218433 | 0.446996 | 0.293461 | 0.095574 |
-| 1 | CDCPretrained | ClassWeight2 | 0.240000 | 364 | 79474 | 19869 | 0.113946 | 0.234924 | 0.682188 | 0.213108 | 0.468198 | 0.292899 | 0.102767 |
-| 1 | CDCPretrained | ClassWeight4 | 0.400000 | 364 | 79474 | 19869 | 0.113946 | 0.232812 | 0.681369 | 0.222715 | 0.421820 | 0.291514 | 0.138534 |
-| 1 | CDCPretrained | SMOTENC | 0.150000 | 364 | 91551 | 19869 | 0.113946 | 0.223823 | 0.666824 | 0.199592 | 0.475707 | 0.281201 | 0.096550 |
-| 2 | Bridge | — | 0.150000 | 350 | 79474 | 19869 | 0.113846 | 0.226784 | 0.667407 | 0.219129 | 0.407162 | 0.284919 | 0.096124 |
-| 2 | Bridge | ClassWeight2 | 0.225000 | 350 | 79474 | 19869 | 0.113846 | 0.226250 | 0.667258 | 0.194035 | 0.517683 | 0.282271 | 0.104242 |
-| 2 | Bridge | ClassWeight4 | 0.370000 | 350 | 79474 | 19869 | 0.113846 | 0.226615 | 0.667543 | 0.197911 | 0.502653 | 0.284001 | 0.140839 |
-| 2 | Bridge | SMOTENC | 0.155000 | 350 | 91548 | 19869 | 0.113846 | 0.215398 | 0.658022 | 0.204780 | 0.446950 | 0.280872 | 0.097028 |
-| 2 | RandomEncoder | — | 0.135000 | 362 | 79474 | 19869 | 0.113846 | 0.227023 | 0.666958 | 0.203557 | 0.475685 | 0.285109 | 0.096149 |
-| 2 | RandomEncoder | ClassWeight2 | 0.235000 | 362 | 79474 | 19869 | 0.113846 | 0.225710 | 0.666396 | 0.200223 | 0.476127 | 0.281900 | 0.104255 |
-| 2 | RandomEncoder | ClassWeight4 | 0.395000 | 362 | 79474 | 19869 | 0.113846 | 0.225926 | 0.666451 | 0.211249 | 0.435013 | 0.284393 | 0.140876 |
-| 2 | RandomEncoder | SMOTENC | 0.160000 | 362 | 91548 | 19869 | 0.113846 | 0.214663 | 0.657301 | 0.208111 | 0.431034 | 0.280697 | 0.097107 |
-| 2 | CDCPretrained | — | 0.150000 | 362 | 79474 | 19869 | 0.113846 | 0.226290 | 0.666618 | 0.217140 | 0.398762 | 0.281172 | 0.096147 |
-| 2 | CDCPretrained | ClassWeight2 | 0.255000 | 362 | 79474 | 19869 | 0.113846 | 0.225676 | 0.666446 | 0.217311 | 0.415119 | 0.285280 | 0.104251 |
-| 2 | CDCPretrained | ClassWeight4 | 0.395000 | 362 | 79474 | 19869 | 0.113846 | 0.225797 | 0.667001 | 0.211745 | 0.436782 | 0.285219 | 0.140841 |
-| 2 | CDCPretrained | SMOTENC | 0.155000 | 362 | 91548 | 19869 | 0.113846 | 0.216811 | 0.656530 | 0.201511 | 0.459770 | 0.280210 | 0.097105 |
-| 3 | Bridge | — | 0.170000 | 350 | 79475 | 19868 | 0.113851 | 0.230583 | 0.678133 | 0.245000 | 0.324934 | 0.279361 | 0.095819 |
-| 3 | Bridge | ClassWeight2 | 0.245000 | 350 | 79475 | 19868 | 0.113851 | 0.229943 | 0.677729 | 0.214043 | 0.444739 | 0.288997 | 0.103429 |
-| 3 | Bridge | ClassWeight4 | 0.380000 | 350 | 79475 | 19868 | 0.113851 | 0.225816 | 0.677095 | 0.209671 | 0.473475 | 0.290638 | 0.139800 |
-| 3 | Bridge | SMOTENC | 0.170000 | 350 | 91549 | 19868 | 0.113851 | 0.222913 | 0.668736 | 0.220819 | 0.386384 | 0.281029 | 0.096499 |
-| 3 | RandomEncoder | — | 0.165000 | 362 | 79475 | 19868 | 0.113851 | 0.229422 | 0.677061 | 0.238988 | 0.338196 | 0.280066 | 0.095889 |
-| 3 | RandomEncoder | ClassWeight2 | 0.260000 | 362 | 79475 | 19868 | 0.113851 | 0.227669 | 0.676909 | 0.221973 | 0.393015 | 0.283708 | 0.103537 |
-| 3 | RandomEncoder | ClassWeight4 | 0.400000 | 362 | 79475 | 19868 | 0.113851 | 0.226555 | 0.677051 | 0.218822 | 0.417330 | 0.287105 | 0.139694 |
-| 3 | RandomEncoder | SMOTENC | 0.155000 | 362 | 91549 | 19868 | 0.113851 | 0.225144 | 0.671028 | 0.209969 | 0.446950 | 0.285714 | 0.096376 |
-| 3 | CDCPretrained | — | 0.145000 | 362 | 79475 | 19868 | 0.113851 | 0.229589 | 0.675864 | 0.216116 | 0.413793 | 0.283938 | 0.095892 |
-| 3 | CDCPretrained | ClassWeight2 | 0.240000 | 362 | 79475 | 19868 | 0.113851 | 0.228487 | 0.677014 | 0.214024 | 0.465517 | 0.293233 | 0.103494 |
-| 3 | CDCPretrained | ClassWeight4 | 0.375000 | 362 | 79475 | 19868 | 0.113851 | 0.224953 | 0.675996 | 0.206954 | 0.492042 | 0.291361 | 0.139802 |
-| 3 | CDCPretrained | SMOTENC | 0.185000 | 362 | 91549 | 19868 | 0.113851 | 0.222756 | 0.668523 | 0.232154 | 0.336428 | 0.274729 | 0.096596 |
-| 4 | Bridge | — | 0.130000 | 347 | 79474 | 19869 | 0.113896 | 0.234975 | 0.673393 | 0.202720 | 0.500663 | 0.288589 | 0.095782 |
-| 4 | Bridge | ClassWeight2 | 0.230000 | 347 | 79474 | 19869 | 0.113896 | 0.235338 | 0.674838 | 0.205669 | 0.500221 | 0.291490 | 0.103116 |
-| 4 | Bridge | ClassWeight4 | 0.375000 | 347 | 79474 | 19869 | 0.113896 | 0.236879 | 0.674900 | 0.208744 | 0.495802 | 0.293794 | 0.139008 |
-| 4 | Bridge | SMOTENC | 0.145000 | 347 | 91549 | 19869 | 0.113896 | 0.222695 | 0.667576 | 0.199351 | 0.488290 | 0.283116 | 0.096562 |
-| 4 | RandomEncoder | — | 0.125000 | 359 | 79474 | 19869 | 0.113896 | 0.235400 | 0.674258 | 0.195293 | 0.528060 | 0.285135 | 0.095740 |
-| 4 | RandomEncoder | ClassWeight2 | 0.225000 | 359 | 79474 | 19869 | 0.113896 | 0.237424 | 0.675317 | 0.200309 | 0.515245 | 0.288471 | 0.103015 |
-| 4 | RandomEncoder | ClassWeight4 | 0.360000 | 359 | 79474 | 19869 | 0.113896 | 0.234910 | 0.675068 | 0.196075 | 0.529828 | 0.286226 | 0.138893 |
-| 4 | RandomEncoder | SMOTENC | 0.145000 | 359 | 91549 | 19869 | 0.113896 | 0.226524 | 0.668946 | 0.196103 | 0.484755 | 0.279241 | 0.096392 |
-| 4 | CDCPretrained | — | 0.130000 | 359 | 79474 | 19869 | 0.113896 | 0.236044 | 0.674554 | 0.203189 | 0.506849 | 0.290086 | 0.095752 |
-| 4 | CDCPretrained | ClassWeight2 | 0.240000 | 359 | 79474 | 19869 | 0.113896 | 0.235077 | 0.675291 | 0.214358 | 0.467079 | 0.293856 | 0.103083 |
-| 4 | CDCPretrained | ClassWeight4 | 0.370000 | 359 | 79474 | 19869 | 0.113896 | 0.235479 | 0.675580 | 0.204257 | 0.504640 | 0.290807 | 0.138814 |
-| 4 | CDCPretrained | SMOTENC | 0.150000 | 359 | 91549 | 19869 | 0.113896 | 0.221446 | 0.666649 | 0.198117 | 0.464870 | 0.277829 | 0.096657 |
-| 5 | Bridge | — | 0.160000 | 352 | 79475 | 19868 | 0.113902 | 0.234242 | 0.680919 | 0.238913 | 0.368979 | 0.290031 | 0.095600 |
-| 5 | Bridge | ClassWeight2 | 0.275000 | 352 | 79475 | 19868 | 0.113902 | 0.232308 | 0.680970 | 0.240385 | 0.364560 | 0.289728 | 0.102974 |
-| 5 | Bridge | ClassWeight4 | 0.430000 | 352 | 79475 | 19868 | 0.113902 | 0.230789 | 0.680255 | 0.240943 | 0.361467 | 0.289148 | 0.138951 |
-| 5 | Bridge | SMOTENC | 0.160000 | 352 | 91551 | 19868 | 0.113902 | 0.218309 | 0.664386 | 0.209953 | 0.434379 | 0.283081 | 0.096728 |
-| 5 | RandomEncoder | — | 0.160000 | 364 | 79475 | 19868 | 0.113902 | 0.232892 | 0.680600 | 0.235649 | 0.362793 | 0.285714 | 0.095644 |
-| 5 | RandomEncoder | ClassWeight2 | 0.270000 | 364 | 79475 | 19868 | 0.113902 | 0.232840 | 0.680318 | 0.235523 | 0.373840 | 0.288984 | 0.102953 |
-| 5 | RandomEncoder | ClassWeight4 | 0.420000 | 364 | 79475 | 19868 | 0.113902 | 0.230858 | 0.679942 | 0.234043 | 0.379143 | 0.289425 | 0.138864 |
-| 5 | RandomEncoder | SMOTENC | 0.160000 | 364 | 91551 | 19868 | 0.113902 | 0.221323 | 0.666675 | 0.214191 | 0.429518 | 0.285840 | 0.096542 |
-| 5 | CDCPretrained | — | 0.155000 | 364 | 79475 | 19868 | 0.113902 | 0.232632 | 0.680415 | 0.231282 | 0.383562 | 0.288564 | 0.095669 |
-| 5 | CDCPretrained | ClassWeight2 | 0.270000 | 364 | 79475 | 19868 | 0.113902 | 0.233271 | 0.680177 | 0.236791 | 0.374282 | 0.290068 | 0.102948 |
-| 5 | CDCPretrained | ClassWeight4 | 0.425000 | 364 | 79475 | 19868 | 0.113902 | 0.232847 | 0.680288 | 0.237784 | 0.369863 | 0.289469 | 0.138814 |
-| 5 | CDCPretrained | SMOTENC | 0.155000 | 364 | 91551 | 19868 | 0.113902 | 0.218641 | 0.665844 | 0.204118 | 0.460009 | 0.282765 | 0.096721 |
-
-### cdc_encoder_control_smoke
-
-只有部分 fold 的 smoke 執行，沒有完整五折摘要；不可用於正式模型排名。
-
-**未完成完整實驗；下列僅是 partial／smoke 結果。**
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_encoder_control_smoke/fold_results.csv)；12 列、14 欄。
-
-| Fold | FeatureSet | IH | Threshold | Features | TrainRows | TestRows | PositiveRate | AP | AUROC | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Bridge | — | 0.130000 | 347 | 49671 | 49672 | 0.113887 | 0.227099 | 0.671253 | 0.198889 | 0.493548 | 0.283524 | 0.096063 |
-| 1 | Bridge | ClassWeight2 | 0.240000 | 347 | 49671 | 49672 | 0.113887 | 0.228095 | 0.672014 | 0.209696 | 0.455719 | 0.287226 | 0.103385 |
-| 1 | RandomEncoder | — | 0.145000 | 359 | 49671 | 49672 | 0.113887 | 0.228073 | 0.671834 | 0.216941 | 0.418773 | 0.285818 | 0.096034 |
-| 1 | RandomEncoder | ClassWeight2 | 0.260000 | 359 | 49671 | 49672 | 0.113887 | 0.227783 | 0.671500 | 0.224419 | 0.389252 | 0.284698 | 0.103364 |
-| 1 | CDCPretrained | — | 0.130000 | 359 | 49671 | 49672 | 0.113887 | 0.227943 | 0.670502 | 0.199217 | 0.494608 | 0.284032 | 0.096052 |
-| 1 | CDCPretrained | ClassWeight2 | 0.230000 | 359 | 49671 | 49672 | 0.113887 | 0.228449 | 0.670868 | 0.201614 | 0.490189 | 0.285714 | 0.103360 |
-| 2 | Bridge | — | 0.170000 | 344 | 49672 | 49671 | 0.113889 | 0.225420 | 0.671397 | 0.240846 | 0.330210 | 0.278536 | 0.096158 |
-| 2 | Bridge | ClassWeight2 | 0.290000 | 344 | 49672 | 49671 | 0.113889 | 0.226364 | 0.672454 | 0.239915 | 0.319604 | 0.274085 | 0.103882 |
-| 2 | RandomEncoder | — | 0.165000 | 356 | 49672 | 49671 | 0.113889 | 0.225383 | 0.671532 | 0.235119 | 0.349832 | 0.281228 | 0.096161 |
-| 2 | RandomEncoder | ClassWeight2 | 0.295000 | 356 | 49672 | 49671 | 0.113889 | 0.226283 | 0.673080 | 0.246326 | 0.311119 | 0.274957 | 0.103842 |
-| 2 | CDCPretrained | — | 0.170000 | 356 | 49672 | 49671 | 0.113889 | 0.225722 | 0.671331 | 0.241170 | 0.329503 | 0.278500 | 0.096140 |
-| 2 | CDCPretrained | ClassWeight2 | 0.305000 | 356 | 49672 | 49671 | 0.113889 | 0.225850 | 0.672103 | 0.253792 | 0.286901 | 0.269333 | 0.103851 |
-
-### cdc_encoder_cv_results
-
-編碼器交叉驗證與群組風險分數。
-
-來源：[原始指標](results/cdc_encoder_cv_results/summary_mean_std.csv)；4 列、13 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Precision_mean | Precision_std | Recall_mean | Recall_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Bridge | 0.232902 | 0.001614 | 0.676819 | 0.005809 | 0.288059 | 0.004803 | 0.214281 | 0.015493 | 0.448821 | 0.058562 | 0.114814 | 0.022952 |
-| E2_CDC_Scores | 0.233266 | 0.001984 | 0.676688 | 0.006054 | 0.285793 | 0.004991 | 0.220614 | 0.017752 | 0.421770 | 0.085758 | 0.114819 | 0.022948 |
-| E3_CDC_Embedding | 0.233726 | 0.001849 | 0.677213 | 0.005822 | 0.288280 | 0.002859 | 0.216956 | 0.015309 | 0.439103 | 0.060510 | 0.097233 | 0.003411 |
-| E4_CDC_Combined | 0.234186 | 0.002416 | 0.677256 | 0.006458 | 0.289230 | 0.004607 | 0.218143 | 0.007150 | 0.432205 | 0.040136 | 0.100255 | 0.004301 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_encoder_cv_results/fold_results.csv)；20 列、14 欄。
-
-| Fold | Experiment | Features | SelectedWeight | FinalWeight | InnerAP | Threshold | PositiveRate | AUROC | AP | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | E1_Bridge | 2436 | 4.000000 | 4.000000 | 0.227294 | 0.390000 | 0.113946 | 0.679940 | 0.233227 | 0.217974 | 0.445671 | 0.292761 | 0.138715 |
-| 1 | E2_CDC_Scores | 2440 | 1.000000 | 1.000000 | 0.226781 | 0.145000 | 0.113946 | 0.681207 | 0.235481 | 0.224383 | 0.417845 | 0.291975 | 0.095629 |
-| 1 | E3_CDC_Embedding | 2444 | 1.000000 | 1.000000 | 0.227167 | 0.145000 | 0.113946 | 0.681228 | 0.235285 | 0.224964 | 0.418728 | 0.292683 | 0.095639 |
-| 1 | E4_CDC_Combined | 2448 | 1.000000 | 1.000000 | 0.228673 | 0.145000 | 0.113946 | 0.681594 | 0.236493 | 0.225107 | 0.417403 | 0.292479 | 0.095565 |
-| 2 | E1_Bridge | 2422 | 4.000000 | 4.000000 | 0.245699 | 0.375000 | 0.113846 | 0.666771 | 0.231929 | 0.198601 | 0.477011 | 0.280442 | 0.140700 |
-| 2 | E2_CDC_Scores | 2426 | 4.000000 | 4.000000 | 0.244928 | 0.435000 | 0.113846 | 0.666278 | 0.232097 | 0.237352 | 0.335986 | 0.278184 | 0.140498 |
-| 2 | E3_CDC_Embedding | 2430 | 1.000000 | 1.000000 | 0.245530 | 0.135000 | 0.113846 | 0.667101 | 0.234134 | 0.205442 | 0.467286 | 0.285406 | 0.095893 |
-| 2 | E4_CDC_Combined | 2434 | 2.000000 | 2.000000 | 0.245857 | 0.255000 | 0.113846 | 0.666114 | 0.232776 | 0.215933 | 0.409814 | 0.282838 | 0.103946 |
-| 3 | E1_Bridge | 2434 | 2.000000 | 2.000000 | 0.229447 | 0.265000 | 0.113851 | 0.678538 | 0.230678 | 0.229995 | 0.383731 | 0.287608 | 0.103362 |
-| 3 | E2_CDC_Scores | 2438 | 2.000000 | 2.000000 | 0.229168 | 0.255000 | 0.113851 | 0.677392 | 0.231023 | 0.221060 | 0.411141 | 0.287525 | 0.103367 |
-| 3 | E3_CDC_Embedding | 2442 | 2.000000 | 2.000000 | 0.229930 | 0.260000 | 0.113851 | 0.678720 | 0.230526 | 0.225038 | 0.396552 | 0.287132 | 0.103332 |
-| 3 | E4_CDC_Combined | 2446 | 2.000000 | 2.000000 | 0.229604 | 0.255000 | 0.113851 | 0.677793 | 0.230656 | 0.220489 | 0.406278 | 0.285848 | 0.103360 |
-| 4 | E1_Bridge | 2438 | 1.000000 | 1.000000 | 0.228768 | 0.125000 | 0.113896 | 0.677452 | 0.233954 | 0.197472 | 0.531595 | 0.287971 | 0.095726 |
-| 4 | E2_CDC_Scores | 2442 | 1.000000 | 1.000000 | 0.228899 | 0.120000 | 0.113896 | 0.677889 | 0.235228 | 0.190818 | 0.563853 | 0.285140 | 0.095676 |
-| 4 | E3_CDC_Embedding | 2446 | 1.000000 | 1.000000 | 0.229890 | 0.125000 | 0.113896 | 0.678028 | 0.234539 | 0.196434 | 0.530711 | 0.286737 | 0.095697 |
-| 4 | E4_CDC_Combined | 2450 | 2.000000 | 2.000000 | 0.229043 | 0.230000 | 0.113896 | 0.678985 | 0.235736 | 0.206834 | 0.502872 | 0.293110 | 0.102844 |
-| 5 | E1_Bridge | 2425 | 1.000000 | 1.000000 | 0.247550 | 0.150000 | 0.113902 | 0.681394 | 0.234723 | 0.227363 | 0.406098 | 0.291515 | 0.095569 |
-| 5 | E2_CDC_Scores | 2429 | 4.000000 | 4.000000 | 0.245992 | 0.415000 | 0.113902 | 0.680671 | 0.232501 | 0.229456 | 0.380027 | 0.286142 | 0.138927 |
-| 5 | E3_CDC_Embedding | 2433 | 1.000000 | 1.000000 | 0.247887 | 0.155000 | 0.113902 | 0.680990 | 0.234147 | 0.232903 | 0.382236 | 0.289443 | 0.095603 |
-| 5 | E4_CDC_Combined | 2437 | 1.000000 | 1.000000 | 0.247151 | 0.145000 | 0.113902 | 0.681794 | 0.235270 | 0.222351 | 0.424658 | 0.291875 | 0.095560 |
-
-### cdc_ih_5fold_results
-
-類別不平衡處理：原比例、ROS、RUS、SMOTE、加權及各特徵組合。
-
-來源：[原始指標](results/cdc_ih_5fold_results/summary_mean_std.csv)；20 列、14 欄。
-
-| FeatureSet | IH | AP_mean | AP_std | AUROC_mean | AUROC_std | Precision_mean | Precision_std | Recall_mean | Recall_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Baseline | ClassWeight | 0.229549 | 0.000758 | 0.675616 | 0.005169 | 0.216186 | 0.011030 | 0.437237 | 0.052003 | 0.287906 | 0.003767 | 0.218665 | 0.000893 |
-| Baseline | — | 0.234825 | 0.001933 | 0.676851 | 0.005618 | 0.214922 | 0.011872 | 0.452978 | 0.054757 | 0.289849 | 0.003279 | 0.095689 | 0.000150 |
-| Baseline | ROS | 0.231277 | 0.001334 | 0.675167 | 0.005883 | 0.221009 | 0.010131 | 0.415242 | 0.021590 | 0.288012 | 0.005364 | 0.108016 | 0.000512 |
-| Baseline | RUS | 0.231955 | 0.002235 | 0.675656 | 0.006644 | 0.219808 | 0.014968 | 0.427090 | 0.048004 | 0.288580 | 0.006252 | 0.108684 | 0.000629 |
-| Baseline | SMOTE | 0.229811 | 0.002073 | 0.674725 | 0.005441 | 0.217530 | 0.011499 | 0.426017 | 0.046662 | 0.286619 | 0.002768 | 0.095992 | 0.000177 |
-| Bridge | ClassWeight | 0.229588 | 0.001942 | 0.675832 | 0.005120 | 0.223126 | 0.008740 | 0.410017 | 0.035622 | 0.288228 | 0.005033 | 0.218550 | 0.000929 |
-| Bridge | — | 0.234671 | 0.000900 | 0.677202 | 0.005971 | 0.214929 | 0.012599 | 0.452790 | 0.061431 | 0.289653 | 0.003667 | 0.095686 | 0.000136 |
-| Bridge | ROS | 0.232105 | 0.001741 | 0.675420 | 0.005907 | 0.218098 | 0.011254 | 0.432997 | 0.044707 | 0.288971 | 0.007154 | 0.107942 | 0.000527 |
-| Bridge | RUS | 0.232719 | 0.002409 | 0.676112 | 0.006793 | 0.210356 | 0.012306 | 0.460843 | 0.047856 | 0.287549 | 0.005091 | 0.108634 | 0.000652 |
-| Bridge | SMOTE | 0.230381 | 0.002082 | 0.675099 | 0.005763 | 0.213319 | 0.014849 | 0.443169 | 0.065921 | 0.285579 | 0.003537 | 0.095950 | 0.000169 |
-| CDC_All | ClassWeight | 0.229947 | 0.001996 | 0.675418 | 0.005131 | 0.214401 | 0.007400 | 0.437510 | 0.034682 | 0.287162 | 0.003176 | 0.218568 | 0.000777 |
-| CDC_All | — | 0.234544 | 0.001997 | 0.677255 | 0.005892 | 0.214605 | 0.021910 | 0.457131 | 0.088551 | 0.287679 | 0.005704 | 0.095692 | 0.000149 |
-| CDC_All | ROS | 0.231259 | 0.001297 | 0.675112 | 0.005687 | 0.216106 | 0.009661 | 0.436093 | 0.047874 | 0.287846 | 0.004197 | 0.107992 | 0.000495 |
-| CDC_All | RUS | 0.232153 | 0.002769 | 0.675931 | 0.007066 | 0.219043 | 0.014914 | 0.426210 | 0.047959 | 0.287698 | 0.005566 | 0.108664 | 0.000694 |
-| CDC_All | SMOTE | 0.229963 | 0.001727 | 0.674739 | 0.005719 | 0.209110 | 0.013969 | 0.457760 | 0.060450 | 0.285165 | 0.003645 | 0.095981 | 0.000171 |
-| CDC_Multi | ClassWeight | 0.229862 | 0.001965 | 0.675775 | 0.005610 | 0.222886 | 0.014860 | 0.415747 | 0.084413 | 0.286475 | 0.007658 | 0.218341 | 0.000980 |
-| CDC_Multi | — | 0.233780 | 0.001988 | 0.676580 | 0.006244 | 0.218934 | 0.013906 | 0.429640 | 0.059350 | 0.288136 | 0.004158 | 0.095735 | 0.000160 |
-| CDC_Multi | ROS | 0.231051 | 0.001830 | 0.675239 | 0.006022 | 0.217774 | 0.012052 | 0.424953 | 0.051428 | 0.286420 | 0.004063 | 0.107962 | 0.000584 |
-| CDC_Multi | RUS | 0.232289 | 0.002733 | 0.676210 | 0.007049 | 0.219233 | 0.012910 | 0.430358 | 0.033656 | 0.289529 | 0.005036 | 0.108659 | 0.000678 |
-| CDC_Multi | SMOTE | 0.230097 | 0.002866 | 0.674872 | 0.005793 | 0.214639 | 0.010785 | 0.436891 | 0.047025 | 0.286648 | 0.002891 | 0.095970 | 0.000192 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/cdc_ih_5fold_results/fold_results.csv)；100 列、13 欄。
-
-| FeatureSet | IH | Fold | TrainRows | TestRows | PositiveRate | Threshold | AUROC | AP | Precision | Recall | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Baseline | — | 1 | 79474 | 19869 | 0.113946 | 0.135000 | 0.682138 | 0.237806 | 0.212758 | 0.474382 | 0.293764 | 0.095499 |
-| Baseline | ClassWeight | 1 | 79474 | 19869 | 0.113946 | 0.540000 | 0.677647 | 0.229981 | 0.211224 | 0.478799 | 0.293131 | 0.218063 |
-| Baseline | ROS | 1 | 79474 | 19869 | 0.113946 | 0.285000 | 0.679197 | 0.231320 | 0.224821 | 0.403269 | 0.288696 | 0.107666 |
-| Baseline | RUS | 1 | 79474 | 19869 | 0.113946 | 0.290000 | 0.680497 | 0.235107 | 0.228352 | 0.394876 | 0.289367 | 0.108035 |
-| Baseline | SMOTE | 1 | 79474 | 19869 | 0.113946 | 0.145000 | 0.678297 | 0.233129 | 0.210590 | 0.458481 | 0.288614 | 0.095799 |
-| Bridge | — | 1 | 79474 | 19869 | 0.113946 | 0.130000 | 0.682025 | 0.236156 | 0.207910 | 0.506184 | 0.294753 | 0.095582 |
-| Bridge | ClassWeight | 1 | 79474 | 19869 | 0.113946 | 0.545000 | 0.678364 | 0.229913 | 0.212779 | 0.463339 | 0.291632 | 0.217780 |
-| Bridge | ROS | 1 | 79474 | 19869 | 0.113946 | 0.260000 | 0.679082 | 0.232082 | 0.208318 | 0.491166 | 0.292555 | 0.107538 |
-| Bridge | RUS | 1 | 79474 | 19869 | 0.113946 | 0.260000 | 0.681107 | 0.236544 | 0.208326 | 0.490724 | 0.292484 | 0.107938 |
-| Bridge | SMOTE | 1 | 79474 | 19869 | 0.113946 | 0.150000 | 0.678949 | 0.232462 | 0.216484 | 0.435071 | 0.289111 | 0.095812 |
-| CDC_All | — | 1 | 79474 | 19869 | 0.113946 | 0.140000 | 0.681743 | 0.236202 | 0.218029 | 0.446555 | 0.293001 | 0.095582 |
-| CDC_All | ClassWeight | 1 | 79474 | 19869 | 0.113946 | 0.555000 | 0.677943 | 0.229616 | 0.219545 | 0.434629 | 0.291728 | 0.218087 |
-| CDC_All | ROS | 1 | 79474 | 19869 | 0.113946 | 0.270000 | 0.678317 | 0.230217 | 0.212223 | 0.447880 | 0.287986 | 0.107694 |
-| CDC_All | RUS | 1 | 79474 | 19869 | 0.113946 | 0.300000 | 0.682045 | 0.236036 | 0.234216 | 0.367049 | 0.285960 | 0.107913 |
-| CDC_All | SMOTE | 1 | 79474 | 19869 | 0.113946 | 0.155000 | 0.677910 | 0.232231 | 0.219635 | 0.404152 | 0.284603 | 0.095827 |
-| CDC_Multi | — | 1 | 79474 | 19869 | 0.113946 | 0.145000 | 0.680846 | 0.235597 | 0.224716 | 0.420053 | 0.292796 | 0.095621 |
-| CDC_Multi | ClassWeight | 1 | 79474 | 19869 | 0.113946 | 0.525000 | 0.677261 | 0.229639 | 0.203653 | 0.522085 | 0.293009 | 0.217852 |
-| CDC_Multi | ROS | 1 | 79474 | 19869 | 0.113946 | 0.265000 | 0.679293 | 0.230685 | 0.209936 | 0.462898 | 0.288864 | 0.107570 |
-| CDC_Multi | RUS | 1 | 79474 | 19869 | 0.113946 | 0.290000 | 0.681198 | 0.236029 | 0.229600 | 0.400177 | 0.291787 | 0.107945 |
-| CDC_Multi | SMOTE | 1 | 79474 | 19869 | 0.113946 | 0.150000 | 0.678928 | 0.233837 | 0.219120 | 0.433304 | 0.291055 | 0.095749 |
-| Baseline | — | 2 | 79474 | 19869 | 0.113846 | 0.140000 | 0.667576 | 0.233844 | 0.212002 | 0.451370 | 0.288500 | 0.095913 |
-| Baseline | ClassWeight | 2 | 79474 | 19869 | 0.113846 | 0.565000 | 0.666518 | 0.229183 | 0.216109 | 0.408046 | 0.282565 | 0.219978 |
-| Baseline | ROS | 2 | 79474 | 19869 | 0.113846 | 0.270000 | 0.665085 | 0.230241 | 0.205590 | 0.438992 | 0.280034 | 0.108874 |
-| Baseline | RUS | 2 | 79474 | 19869 | 0.113846 | 0.265000 | 0.664877 | 0.230454 | 0.199146 | 0.474359 | 0.280523 | 0.109707 |
-| Baseline | SMOTE | 2 | 79474 | 19869 | 0.113846 | 0.145000 | 0.665674 | 0.228465 | 0.206181 | 0.457118 | 0.284183 | 0.096283 |
-| Bridge | — | 2 | 79474 | 19869 | 0.113846 | 0.145000 | 0.667147 | 0.233962 | 0.215762 | 0.419982 | 0.285071 | 0.095903 |
-| Bridge | ClassWeight | 2 | 79474 | 19869 | 0.113846 | 0.565000 | 0.666861 | 0.230063 | 0.219387 | 0.414235 | 0.286851 | 0.219870 |
-| Bridge | ROS | 2 | 79474 | 19869 | 0.113846 | 0.275000 | 0.665364 | 0.229129 | 0.207584 | 0.418656 | 0.277550 | 0.108853 |
-| Bridge | RUS | 2 | 79474 | 19869 | 0.113846 | 0.265000 | 0.665122 | 0.230550 | 0.198883 | 0.472149 | 0.279874 | 0.109699 |
-| Bridge | SMOTE | 2 | 79474 | 19869 | 0.113846 | 0.150000 | 0.665519 | 0.229316 | 0.209110 | 0.436340 | 0.282727 | 0.096226 |
-| CDC_All | — | 2 | 79474 | 19869 | 0.113846 | 0.125000 | 0.667250 | 0.232975 | 0.191404 | 0.529620 | 0.281188 | 0.095928 |
-| CDC_All | ClassWeight | 2 | 79474 | 19869 | 0.113846 | 0.555000 | 0.666456 | 0.230506 | 0.211356 | 0.432803 | 0.284015 | 0.219621 |
-| CDC_All | ROS | 2 | 79474 | 19869 | 0.113846 | 0.280000 | 0.665365 | 0.229879 | 0.214717 | 0.408930 | 0.281583 | 0.108841 |
-| CDC_All | RUS | 2 | 79474 | 19869 | 0.113846 | 0.265000 | 0.664794 | 0.228625 | 0.198373 | 0.474359 | 0.279755 | 0.109795 |
-| CDC_All | SMOTE | 2 | 79474 | 19869 | 0.113846 | 0.135000 | 0.665061 | 0.228709 | 0.193716 | 0.509726 | 0.280740 | 0.096272 |
-| CDC_Multi | — | 2 | 79474 | 19869 | 0.113846 | 0.145000 | 0.665801 | 0.231222 | 0.214547 | 0.414677 | 0.282786 | 0.096010 |
-| CDC_Multi | ClassWeight | 2 | 79474 | 19869 | 0.113846 | 0.595000 | 0.665897 | 0.228639 | 0.236198 | 0.332891 | 0.276330 | 0.219753 |
-| CDC_Multi | ROS | 2 | 79474 | 19869 | 0.113846 | 0.275000 | 0.664807 | 0.228674 | 0.210121 | 0.422193 | 0.280594 | 0.108943 |
-| CDC_Multi | RUS | 2 | 79474 | 19869 | 0.113846 | 0.270000 | 0.664814 | 0.230423 | 0.202298 | 0.459328 | 0.280887 | 0.109735 |
-| CDC_Multi | SMOTE | 2 | 79474 | 19869 | 0.113846 | 0.150000 | 0.665039 | 0.228864 | 0.208770 | 0.439876 | 0.283153 | 0.096266 |
-| Baseline | — | 3 | 79475 | 19868 | 0.113851 | 0.135000 | 0.677745 | 0.233166 | 0.209339 | 0.471706 | 0.289985 | 0.095718 |
-| Baseline | ClassWeight | 3 | 79475 | 19868 | 0.113851 | 0.565000 | 0.677653 | 0.228390 | 0.220512 | 0.411583 | 0.287168 | 0.219215 |
-| Baseline | ROS | 3 | 79475 | 19868 | 0.113851 | 0.275000 | 0.676406 | 0.229748 | 0.216318 | 0.430150 | 0.287870 | 0.108109 |
-| Baseline | RUS | 3 | 79475 | 19868 | 0.113851 | 0.275000 | 0.676677 | 0.229326 | 0.213490 | 0.440760 | 0.287651 | 0.108766 |
-| Baseline | SMOTE | 3 | 79475 | 19868 | 0.113851 | 0.165000 | 0.676519 | 0.229351 | 0.226978 | 0.386826 | 0.286088 | 0.095956 |
-| Bridge | — | 3 | 79475 | 19868 | 0.113851 | 0.150000 | 0.677992 | 0.234557 | 0.226137 | 0.400088 | 0.288953 | 0.095651 |
-| Bridge | ClassWeight | 3 | 79475 | 19868 | 0.113851 | 0.570000 | 0.676740 | 0.226364 | 0.219512 | 0.393899 | 0.281917 | 0.219184 |
-| Bridge | ROS | 3 | 79475 | 19868 | 0.113851 | 0.275000 | 0.677812 | 0.232732 | 0.218577 | 0.435897 | 0.291156 | 0.107904 |
-| Bridge | RUS | 3 | 79475 | 19868 | 0.113851 | 0.270000 | 0.677124 | 0.230772 | 0.207931 | 0.456676 | 0.285754 | 0.108666 |
-| Bridge | SMOTE | 3 | 79475 | 19868 | 0.113851 | 0.145000 | 0.675985 | 0.228614 | 0.210900 | 0.460212 | 0.289247 | 0.095979 |
-| CDC_All | — | 3 | 79475 | 19868 | 0.113851 | 0.160000 | 0.677522 | 0.232214 | 0.235123 | 0.356322 | 0.283304 | 0.095755 |
-| CDC_All | ClassWeight | 3 | 79475 | 19868 | 0.113851 | 0.555000 | 0.676482 | 0.226849 | 0.212975 | 0.431034 | 0.285088 | 0.219168 |
-| CDC_All | ROS | 3 | 79475 | 19868 | 0.113851 | 0.275000 | 0.676778 | 0.231253 | 0.220183 | 0.435013 | 0.292379 | 0.108020 |
-| CDC_All | RUS | 3 | 79475 | 19868 | 0.113851 | 0.270000 | 0.676554 | 0.230603 | 0.210167 | 0.462423 | 0.288990 | 0.108693 |
-| CDC_All | SMOTE | 3 | 79475 | 19868 | 0.113851 | 0.150000 | 0.676752 | 0.229142 | 0.216333 | 0.443855 | 0.290888 | 0.095965 |
-| CDC_Multi | — | 3 | 79475 | 19868 | 0.113851 | 0.155000 | 0.677258 | 0.232903 | 0.230603 | 0.377100 | 0.286194 | 0.095742 |
-| CDC_Multi | ClassWeight | 3 | 79475 | 19868 | 0.113851 | 0.580000 | 0.677605 | 0.227854 | 0.227903 | 0.370469 | 0.282202 | 0.218943 |
-| CDC_Multi | ROS | 3 | 79475 | 19868 | 0.113851 | 0.290000 | 0.676953 | 0.230488 | 0.226917 | 0.384615 | 0.285433 | 0.108056 |
-| CDC_Multi | RUS | 3 | 79475 | 19868 | 0.113851 | 0.275000 | 0.676503 | 0.229108 | 0.214347 | 0.445181 | 0.289368 | 0.108822 |
-| CDC_Multi | SMOTE | 3 | 79475 | 19868 | 0.113851 | 0.155000 | 0.676622 | 0.227948 | 0.218641 | 0.416888 | 0.286844 | 0.096001 |
-| Baseline | — | 4 | 79474 | 19869 | 0.113896 | 0.130000 | 0.676570 | 0.235723 | 0.205050 | 0.505966 | 0.291831 | 0.095678 |
-| Baseline | ClassWeight | 4 | 79474 | 19869 | 0.113896 | 0.530000 | 0.676870 | 0.230232 | 0.201658 | 0.505082 | 0.288236 | 0.217969 |
-| Baseline | ROS | 4 | 79474 | 19869 | 0.113896 | 0.285000 | 0.675646 | 0.233046 | 0.227830 | 0.418913 | 0.295143 | 0.107706 |
-| Baseline | RUS | 4 | 79474 | 19869 | 0.113896 | 0.275000 | 0.674666 | 0.232895 | 0.219370 | 0.464428 | 0.297987 | 0.108414 |
-| Baseline | SMOTE | 4 | 79474 | 19869 | 0.113896 | 0.145000 | 0.673946 | 0.230283 | 0.211376 | 0.463102 | 0.290265 | 0.095968 |
-| Bridge | — | 4 | 79474 | 19869 | 0.113896 | 0.125000 | 0.677452 | 0.233954 | 0.197472 | 0.531595 | 0.287971 | 0.095726 |
-| Bridge | ClassWeight | 4 | 79474 | 19869 | 0.113896 | 0.570000 | 0.677636 | 0.231644 | 0.229259 | 0.412726 | 0.294777 | 0.217884 |
-| Bridge | ROS | 4 | 79474 | 19869 | 0.113896 | 0.275000 | 0.675044 | 0.233454 | 0.220802 | 0.450287 | 0.296307 | 0.107745 |
-| Bridge | RUS | 4 | 79474 | 19869 | 0.113896 | 0.260000 | 0.675039 | 0.232722 | 0.205336 | 0.503314 | 0.291677 | 0.108409 |
-| Bridge | SMOTE | 4 | 79474 | 19869 | 0.113896 | 0.130000 | 0.674903 | 0.232815 | 0.194529 | 0.534247 | 0.285209 | 0.095822 |
-| CDC_All | — | 4 | 79474 | 19869 | 0.113896 | 0.120000 | 0.678342 | 0.236849 | 0.192453 | 0.563411 | 0.286904 | 0.095607 |
-| CDC_All | ClassWeight | 4 | 79474 | 19869 | 0.113896 | 0.535000 | 0.676866 | 0.232332 | 0.204550 | 0.492709 | 0.289085 | 0.217853 |
-| CDC_All | ROS | 4 | 79474 | 19869 | 0.113896 | 0.255000 | 0.675384 | 0.231843 | 0.203684 | 0.508175 | 0.290808 | 0.107727 |
-| CDC_All | RUS | 4 | 79474 | 19869 | 0.113896 | 0.280000 | 0.674373 | 0.232840 | 0.221217 | 0.443217 | 0.295130 | 0.108455 |
-| CDC_All | SMOTE | 4 | 79474 | 19869 | 0.113896 | 0.130000 | 0.674438 | 0.231371 | 0.194189 | 0.531595 | 0.284464 | 0.095923 |
-| CDC_Multi | — | 4 | 79474 | 19869 | 0.113896 | 0.125000 | 0.678062 | 0.235983 | 0.196601 | 0.531595 | 0.287044 | 0.095644 |
-| CDC_Multi | ClassWeight | 4 | 79474 | 19869 | 0.113896 | 0.540000 | 0.678270 | 0.232986 | 0.210877 | 0.490057 | 0.294868 | 0.217376 |
-| CDC_Multi | ROS | 4 | 79474 | 19869 | 0.113896 | 0.260000 | 0.675842 | 0.231747 | 0.207583 | 0.488732 | 0.291398 | 0.107667 |
-| CDC_Multi | RUS | 4 | 79474 | 19869 | 0.113896 | 0.275000 | 0.675715 | 0.233789 | 0.215397 | 0.458683 | 0.293138 | 0.108341 |
-| CDC_Multi | SMOTE | 4 | 79474 | 19869 | 0.113896 | 0.135000 | 0.674654 | 0.232434 | 0.199345 | 0.511268 | 0.286848 | 0.095866 |
-| Baseline | — | 5 | 79475 | 19868 | 0.113902 | 0.160000 | 0.680227 | 0.233585 | 0.235463 | 0.361467 | 0.285166 | 0.095640 |
-| Baseline | ClassWeight | 5 | 79475 | 19868 | 0.113902 | 0.580000 | 0.679391 | 0.229957 | 0.231427 | 0.382678 | 0.288426 | 0.218098 |
-| Baseline | ROS | 5 | 79475 | 19868 | 0.113902 | 0.295000 | 0.679501 | 0.232032 | 0.230484 | 0.384887 | 0.288315 | 0.107727 |
-| Baseline | RUS | 5 | 79475 | 19868 | 0.113902 | 0.310000 | 0.681566 | 0.231995 | 0.238680 | 0.361025 | 0.287372 | 0.108495 |
-| Baseline | SMOTE | 5 | 79475 | 19868 | 0.113902 | 0.170000 | 0.679187 | 0.227828 | 0.232525 | 0.364560 | 0.283944 | 0.095954 |
-| Bridge | — | 5 | 79475 | 19868 | 0.113902 | 0.150000 | 0.681394 | 0.234723 | 0.227363 | 0.406098 | 0.291515 | 0.095569 |
-| Bridge | ClassWeight | 5 | 79475 | 19868 | 0.113902 | 0.585000 | 0.679559 | 0.229959 | 0.234694 | 0.365886 | 0.285961 | 0.218031 |
-| Bridge | ROS | 5 | 79475 | 19868 | 0.113902 | 0.300000 | 0.679800 | 0.233129 | 0.235211 | 0.368979 | 0.287287 | 0.107668 |
-| Bridge | RUS | 5 | 79475 | 19868 | 0.113902 | 0.300000 | 0.682170 | 0.233008 | 0.231305 | 0.381352 | 0.287955 | 0.108457 |
-| Bridge | SMOTE | 5 | 79475 | 19868 | 0.113902 | 0.175000 | 0.680139 | 0.228700 | 0.235574 | 0.349978 | 0.281600 | 0.095912 |
-| CDC_All | — | 5 | 79475 | 19868 | 0.113902 | 0.155000 | 0.681421 | 0.234478 | 0.236018 | 0.389748 | 0.294000 | 0.095589 |
-| CDC_All | ClassWeight | 5 | 79475 | 19868 | 0.113902 | 0.570000 | 0.679343 | 0.230433 | 0.223579 | 0.396376 | 0.285896 | 0.218114 |
-| CDC_All | ROS | 5 | 79475 | 19868 | 0.113902 | 0.295000 | 0.679718 | 0.233101 | 0.229723 | 0.380468 | 0.286475 | 0.107675 |
-| CDC_All | RUS | 5 | 79475 | 19868 | 0.113902 | 0.300000 | 0.681888 | 0.232662 | 0.231240 | 0.384004 | 0.288656 | 0.108465 |
-| CDC_All | SMOTE | 5 | 79475 | 19868 | 0.113902 | 0.160000 | 0.679532 | 0.228362 | 0.221677 | 0.399470 | 0.285129 | 0.095917 |
-| CDC_Multi | — | 5 | 79475 | 19868 | 0.113902 | 0.150000 | 0.680931 | 0.233194 | 0.228201 | 0.404772 | 0.291859 | 0.095659 |
-| CDC_Multi | ClassWeight | 5 | 79475 | 19868 | 0.113902 | 0.585000 | 0.679844 | 0.230193 | 0.235800 | 0.363235 | 0.285963 | 0.217781 |
-| CDC_Multi | ROS | 5 | 79475 | 19868 | 0.113902 | 0.300000 | 0.679301 | 0.233660 | 0.234313 | 0.366328 | 0.285813 | 0.107573 |
-| CDC_Multi | RUS | 5 | 79475 | 19868 | 0.113902 | 0.300000 | 0.682819 | 0.232098 | 0.234525 | 0.388422 | 0.292464 | 0.108450 |
-| CDC_Multi | SMOTE | 5 | 79475 | 19868 | 0.113902 | 0.165000 | 0.679117 | 0.227400 | 0.227320 | 0.383120 | 0.285338 | 0.095968 |
-
-### cdc_proxy_xgb_results
-
-較早的單次 holdout CDC proxy XGBoost，含驗證指標與混淆矩陣。
-
-來源：[原始指標](results/cdc_proxy_xgb_results/experiment_results.csv)；4 列、14 欄。
-
-| Experiment | Features | Threshold | Val_PR_AUC_AP | Val_F1 | AUROC | PR_AUC_AP | Precision | Recall | F1 | TN | FP | FN | TP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1_Baseline | 2392 | 0.545000 | 0.235255 | 0.292234 | 0.675918 | 0.224499 | 0.215406 | 0.450259 | 0.291403 | 10318 | 2852 | 956 | 783 |
-| E2_Bridge | 2396 | 0.550000 | 0.235444 | 0.289639 | 0.677438 | 0.225264 | 0.222029 | 0.441633 | 0.295498 | 10479 | 2691 | 971 | 768 |
-| E3_CDC_All | 2397 | 0.560000 | 0.236862 | 0.290894 | 0.677445 | 0.226693 | 0.229015 | 0.415756 | 0.295343 | 10736 | 2434 | 1016 | 723 |
-| E4_CDC_Diabetes | 2397 | 0.555000 | 0.237051 | 0.292884 | 0.677981 | 0.225165 | 0.221684 | 0.420932 | 0.290419 | 10600 | 2570 | 1007 | 732 |
-
-### meps_augmented_hgb_seed777
-
-MEPS 風險特徵直接擴充 HGB。
-
-來源：[原始指標](results/meps_augmented_hgb_seed777/summary.csv)；3 列、5 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean |
-| --- | --- | --- | --- | --- |
-| ensemble_fixed_50 | 0.237485 | 0.002471 | 0.678561 | 0.096527 |
-| hgb_tuned | 0.237247 | 0.002473 | 0.676933 | 0.095573 |
-| hgb_meps_augmented | 0.236877 | 0.003442 | 0.675689 | 0.095612 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_augmented_hgb_seed777/fold_results.csv)；15 列、5 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier |
-| --- | --- | --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 | 0.677889 | 0.095651 |
-| 1 | ensemble_fixed_50 | 0.238204 | 0.681874 | 0.097052 |
-| 1 | hgb_meps_augmented | 0.237087 | 0.680028 | 0.095550 |
-| 2 | hgb_tuned | 0.235269 | 0.666667 | 0.095854 |
-| 2 | ensemble_fixed_50 | 0.235174 | 0.667987 | 0.095828 |
-| 2 | hgb_meps_augmented | 0.231685 | 0.661844 | 0.096092 |
-| 3 | hgb_tuned | 0.237747 | 0.680836 | 0.095485 |
-| 3 | ensemble_fixed_50 | 0.236854 | 0.680959 | 0.097280 |
-| 3 | hgb_meps_augmented | 0.236153 | 0.677939 | 0.095597 |
-| 4 | hgb_tuned | 0.241348 | 0.678252 | 0.095374 |
-| 4 | ensemble_fixed_50 | 0.241398 | 0.680223 | 0.096980 |
-| 4 | hgb_meps_augmented | 0.241067 | 0.677441 | 0.095410 |
-| 5 | hgb_tuned | 0.236067 | 0.681022 | 0.095501 |
-| 5 | ensemble_fixed_50 | 0.235794 | 0.681760 | 0.095496 |
-| 5 | hgb_meps_augmented | 0.238392 | 0.681196 | 0.095411 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_augmented_hgb_seed777/fold_stratified_patient_bootstrap.csv)；2 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| hgb_meps_augmented - hgb_tuned | -0.000370 | -0.001983 | 0.001408 | 0.345500 | 2000 | patient within fold |
-| hgb_meps_augmented - ensemble_fixed_50 | -0.000608 | -0.002243 | 0.001055 | 0.251500 | 2000 | patient within fold |
-
-### meps_bridge8_nested_seed777
-
-只有第 1 折的部分結果和 MEPS 外部驗證；不可當作完整五折結果。
-
-**未完成完整實驗；下列僅是 partial／smoke 結果。**
-
-#### 部分執行紀錄
-
-來源：[原始 CSV](results/meps_bridge8_nested_seed777/partial_results.csv)；2 列、11 欄。
-
-| Fold | Experiment | Features | AP | AUROC | F1 | Brier | Threshold | ValidationAP | Trees | TuningParams |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 2456 | 0.238178 | 0.683284 | 0.293439 | 0.095458 | 0.145000 | 0.226803 | 400 | {} |
-| 1 | Direct8_MEPS_Both8 | 2470 | 0.237891 | 0.684727 | 0.296800 | 0.102482 | 0.235000 | 0.228363 | 580 | {"learning_rate": 0.03, "max_depth": 4, "min_child_weight": 5, "reg_lambda": 5, "scale_pos_weight": 2.0} |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_bridge8_nested_seed777/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2471 | 1589 | 0.224201 | 0.239089 | 0.532298 |
-| MEPS_IP_2 | 2471 | 1589 | 0.163497 | 0.206413 | 0.570640 |
-| MEPS_ER_6 | 2466 | 1585 | 0.224655 | 0.314239 | 0.619365 |
-| MEPS_IP_6 | 2466 | 1585 | 0.163828 | 0.257526 | 0.646767 |
-| MEPS_ER_8 | 2466 | 1585 | 0.224655 | 0.322382 | 0.628991 |
-| MEPS_IP_8 | 2466 | 1585 | 0.163828 | 0.283542 | 0.668979 |
-
-### meps_bridge8_results
-
-MEPS 人口橋接八特徵、外部風險與 Clinical XGBoost 的 seed 777 對照。
-
-來源：[原始指標](results/meps_bridge8_results/summary.csv)；6 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| Direct_Bridge8 | 0.235104 | 0.002492 | 0.678881 | 0.006830 | 0.290241 | 0.005260 | 0.095644 | 0.000204 |
-| MEPS_ER_8 | 0.234828 | 0.002360 | 0.678292 | 0.007164 | 0.287510 | 0.005754 | 0.095668 | 0.000216 |
-| MEPS_IP_8 | 0.234870 | 0.003099 | 0.678401 | 0.006912 | 0.290449 | 0.005872 | 0.095655 | 0.000218 |
-| MEPS_Both_8 | 0.234393 | 0.002695 | 0.677959 | 0.006467 | 0.289234 | 0.007214 | 0.095676 | 0.000195 |
-| Direct8_MEPS_Both8 | 0.235585 | 0.002876 | 0.678829 | 0.007266 | 0.291118 | 0.004601 | 0.095632 | 0.000221 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_bridge8_results/fold_results.csv)；30 列、8 欄。
-
-| Fold | Experiment | Features | AP | AUROC | F1 | Brier | Threshold |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 2456 | 0.238132 | 0.683548 | 0.293738 | 0.095449 | 0.140000 |
-| 1 | Direct_Bridge8 | 2468 | 0.238897 | 0.684351 | 0.294471 | 0.095421 | 0.140000 |
-| 1 | MEPS_ER_8 | 2457 | 0.237611 | 0.683802 | 0.294578 | 0.095477 | 0.145000 |
-| 1 | MEPS_IP_8 | 2457 | 0.239254 | 0.684346 | 0.295377 | 0.095402 | 0.140000 |
-| 1 | MEPS_Both_8 | 2458 | 0.237467 | 0.683197 | 0.294529 | 0.095472 | 0.140000 |
-| 1 | Direct8_MEPS_Both8 | 2470 | 0.238584 | 0.684542 | 0.294694 | 0.095434 | 0.130000 |
-| 2 | Clinical | 2442 | 0.232633 | 0.667082 | 0.281598 | 0.095966 | 0.155000 |
-| 2 | Direct_Bridge8 | 2454 | 0.232918 | 0.667242 | 0.282341 | 0.095963 | 0.130000 |
-| 2 | MEPS_ER_8 | 2443 | 0.231767 | 0.666083 | 0.280426 | 0.096024 | 0.140000 |
-| 2 | MEPS_IP_8 | 2443 | 0.231711 | 0.666861 | 0.280645 | 0.095976 | 0.130000 |
-| 2 | MEPS_Both_8 | 2444 | 0.231580 | 0.666960 | 0.277576 | 0.095991 | 0.160000 |
-| 2 | Direct8_MEPS_Both8 | 2456 | 0.231852 | 0.666537 | 0.283231 | 0.095996 | 0.140000 |
-| 3 | Clinical | 2454 | 0.232634 | 0.678819 | 0.291225 | 0.095713 | 0.150000 |
-| 3 | Direct_Bridge8 | 2466 | 0.232957 | 0.679276 | 0.287763 | 0.095698 | 0.150000 |
-| 3 | MEPS_ER_8 | 2455 | 0.233136 | 0.679009 | 0.286850 | 0.095693 | 0.140000 |
-| 3 | MEPS_IP_8 | 2455 | 0.232201 | 0.678573 | 0.289663 | 0.095741 | 0.145000 |
-| 3 | MEPS_Both_8 | 2456 | 0.232787 | 0.678363 | 0.290782 | 0.095712 | 0.150000 |
-| 3 | Direct8_MEPS_Both8 | 2468 | 0.233645 | 0.679361 | 0.291504 | 0.095666 | 0.145000 |
-| 4 | Clinical | 2458 | 0.237260 | 0.678997 | 0.295133 | 0.095593 | 0.140000 |
-| 4 | Direct_Bridge8 | 2470 | 0.236048 | 0.680286 | 0.294948 | 0.095576 | 0.140000 |
-| 4 | MEPS_ER_8 | 2459 | 0.236230 | 0.679350 | 0.283872 | 0.095624 | 0.120000 |
-| 4 | MEPS_IP_8 | 2459 | 0.236320 | 0.679135 | 0.293937 | 0.095621 | 0.135000 |
-| 4 | MEPS_Both_8 | 2460 | 0.237092 | 0.679156 | 0.295530 | 0.095609 | 0.145000 |
-| 4 | Direct8_MEPS_Both8 | 2472 | 0.238107 | 0.679745 | 0.292123 | 0.095568 | 0.135000 |
-| 5 | Clinical | 2445 | 0.233936 | 0.682955 | 0.291210 | 0.095599 | 0.145000 |
-| 5 | Direct_Bridge8 | 2457 | 0.234697 | 0.683250 | 0.291680 | 0.095560 | 0.150000 |
-| 5 | MEPS_ER_8 | 2446 | 0.235399 | 0.683216 | 0.291824 | 0.095522 | 0.145000 |
-| 5 | MEPS_IP_8 | 2446 | 0.234867 | 0.683091 | 0.292624 | 0.095534 | 0.145000 |
-| 5 | MEPS_Both_8 | 2447 | 0.233038 | 0.682118 | 0.287752 | 0.095597 | 0.150000 |
-| 5 | Direct8_MEPS_Both8 | 2459 | 0.235739 | 0.683961 | 0.294038 | 0.095495 | 0.145000 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_bridge8_results/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2471 | 1589 | 0.224201 | 0.240224 | 0.533347 |
-| MEPS_IP_2 | 2471 | 1589 | 0.163497 | 0.207863 | 0.572019 |
-| MEPS_ER_6 | 2466 | 1585 | 0.224655 | 0.313856 | 0.619173 |
-| MEPS_IP_6 | 2466 | 1585 | 0.163828 | 0.259234 | 0.646221 |
-| MEPS_ER_8 | 2466 | 1585 | 0.224655 | 0.323295 | 0.630780 |
-| MEPS_IP_8 | 2466 | 1585 | 0.163828 | 0.289660 | 0.669123 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_bridge8_results/patient_bootstrap.csv)；5 列、5 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive |
-| --- | --- | --- | --- | --- |
-| Direct_Bridge8 - Clinical | 0.000197 | -0.000469 | 0.000975 | 0.735000 |
-| MEPS_ER_8 - Clinical | -0.000006 | -0.000755 | 0.000835 | 0.505000 |
-| MEPS_IP_8 - Clinical | 0.000001 | -0.000978 | 0.000990 | 0.555000 |
-| MEPS_Both_8 - Clinical | -0.000450 | -0.001616 | 0.000579 | 0.205000 |
-| Direct8_MEPS_Both8 - Clinical | 0.000446 | -0.000393 | 0.001470 | 0.785000 |
-
-### meps_bridge8_seed2024
-
-Bridge8 在 seed 2024 的穩健性重跑。
-
-來源：[原始指標](results/meps_bridge8_seed2024/summary.csv)；2 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical | 0.232897 | 0.013204 | 0.677103 | 0.008124 | 0.287679 | 0.010834 | 0.095777 | 0.000696 |
-| Direct8_MEPS_Both8 | 0.233741 | 0.013775 | 0.677252 | 0.008099 | 0.290838 | 0.009042 | 0.095738 | 0.000726 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_bridge8_seed2024/fold_results.csv)；10 列、8 欄。
-
-| Fold | Experiment | Features | AP | AUROC | F1 | Brier | Threshold |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 2465 | 0.214194 | 0.663515 | 0.269990 | 0.096828 | 0.120000 |
-| 1 | Direct8_MEPS_Both8 | 2479 | 0.213874 | 0.663819 | 0.275768 | 0.096842 | 0.135000 |
-| 2 | Clinical | 2450 | 0.248950 | 0.685070 | 0.296902 | 0.094997 | 0.150000 |
-| 2 | Direct8_MEPS_Both8 | 2464 | 0.250392 | 0.685192 | 0.299868 | 0.094933 | 0.155000 |
-| 3 | Clinical | 2461 | 0.226348 | 0.677397 | 0.292912 | 0.096024 | 0.135000 |
-| 3 | Direct8_MEPS_Both8 | 2475 | 0.227792 | 0.677034 | 0.290826 | 0.095984 | 0.135000 |
-| 4 | Clinical | 2446 | 0.235974 | 0.678869 | 0.284886 | 0.095642 | 0.130000 |
-| 4 | Direct8_MEPS_Both8 | 2460 | 0.236133 | 0.678977 | 0.293727 | 0.095598 | 0.145000 |
-| 5 | Clinical | 2446 | 0.239020 | 0.680663 | 0.293706 | 0.095394 | 0.145000 |
-| 5 | Direct8_MEPS_Both8 | 2460 | 0.240516 | 0.681237 | 0.294003 | 0.095332 | 0.145000 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_bridge8_seed2024/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2491 | 1587 | 0.217182 | 0.238443 | 0.526942 |
-| MEPS_IP_2 | 2491 | 1587 | 0.165797 | 0.206823 | 0.561199 |
-| MEPS_ER_6 | 2486 | 1584 | 0.217216 | 0.304237 | 0.609930 |
-| MEPS_IP_6 | 2486 | 1584 | 0.165728 | 0.252498 | 0.630851 |
-| MEPS_ER_8 | 2486 | 1584 | 0.217216 | 0.310056 | 0.621380 |
-| MEPS_IP_8 | 2486 | 1584 | 0.165728 | 0.279789 | 0.649179 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_bridge8_seed2024/patient_bootstrap.csv)；1 列、5 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive |
-| --- | --- | --- | --- | --- |
-| Direct8_MEPS_Both8 - Clinical | 0.000882 | -0.000061 | 0.001903 | 0.959000 |
-
-### meps_bridge8_seed3407
-
-Bridge8 在 seed 3407 的穩健性重跑。
-
-來源：[原始指標](results/meps_bridge8_seed3407/summary.csv)；2 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical | 0.233321 | 0.007809 | 0.677429 | 0.002246 | 0.287996 | 0.002201 | 0.095716 | 0.000346 |
-| Direct8_MEPS_Both8 | 0.234106 | 0.008692 | 0.677791 | 0.002818 | 0.286326 | 0.003351 | 0.095676 | 0.000381 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_bridge8_seed3407/fold_results.csv)；10 列、8 欄。
-
-| Fold | Experiment | Features | AP | AUROC | F1 | Brier | Threshold |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 2450 | 0.228237 | 0.679178 | 0.288738 | 0.095893 | 0.135000 |
-| 1 | Direct8_MEPS_Both8 | 2464 | 0.228333 | 0.680021 | 0.289007 | 0.095874 | 0.140000 |
-| 2 | Clinical | 2467 | 0.224741 | 0.677341 | 0.289764 | 0.096070 | 0.145000 |
-| 2 | Direct8_MEPS_Both8 | 2481 | 0.225663 | 0.678110 | 0.287849 | 0.096015 | 0.145000 |
-| 3 | Clinical | 2455 | 0.233210 | 0.675783 | 0.289841 | 0.095783 | 0.130000 |
-| 3 | Direct8_MEPS_Both8 | 2469 | 0.231905 | 0.674879 | 0.287038 | 0.095844 | 0.130000 |
-| 4 | Clinical | 2442 | 0.235232 | 0.674737 | 0.287003 | 0.095678 | 0.130000 |
-| 4 | Direct8_MEPS_Both8 | 2456 | 0.236926 | 0.674961 | 0.287247 | 0.095600 | 0.145000 |
-| 5 | Clinical | 2457 | 0.245187 | 0.680105 | 0.284633 | 0.095154 | 0.125000 |
-| 5 | Direct8_MEPS_Both8 | 2471 | 0.247701 | 0.680986 | 0.280491 | 0.095048 | 0.120000 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_bridge8_seed3407/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2441 | 1584 | 0.211389 | 0.228803 | 0.529637 |
-| MEPS_IP_2 | 2441 | 1584 | 0.152397 | 0.182588 | 0.552135 |
-| MEPS_ER_6 | 2435 | 1580 | 0.211910 | 0.285997 | 0.609878 |
-| MEPS_IP_6 | 2435 | 1580 | 0.152772 | 0.226312 | 0.616951 |
-| MEPS_ER_8 | 2435 | 1580 | 0.211910 | 0.300958 | 0.632032 |
-| MEPS_IP_8 | 2435 | 1580 | 0.152772 | 0.250754 | 0.645372 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_bridge8_seed3407/patient_bootstrap.csv)；1 列、5 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive |
-| --- | --- | --- | --- | --- |
-| Direct8_MEPS_Both8 - Clinical | 0.000799 | -0.000237 | 0.001697 | 0.937000 |
-
-### meps_ccs_group_hgb_seed777
-
-公開 CCS-only HGB 對年度 MEPS CCS 群組 HGB。
-
-來源：[原始指標](results/meps_ccs_group_hgb_seed777/summary.csv)；4 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_group_hgb | 0.238943 | 0.003691 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-| ensemble_fixed_50 | 0.237485 | 0.002471 |
-| hgb_tuned | 0.237247 | 0.002473 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_ccs_group_hgb_seed777/fold_results.csv)；20 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 |
-| 1 | ensemble_fixed_50 | 0.238204 |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_group_hgb | 0.240689 |
-| 2 | hgb_tuned | 0.235269 |
-| 2 | ensemble_fixed_50 | 0.235174 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_group_hgb | 0.232343 |
-| 3 | hgb_tuned | 0.237747 |
-| 3 | ensemble_fixed_50 | 0.236854 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_group_hgb | 0.240531 |
-| 4 | hgb_tuned | 0.241348 |
-| 4 | ensemble_fixed_50 | 0.241398 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_group_hgb | 0.240714 |
-| 5 | hgb_tuned | 0.236067 |
-| 5 | ensemble_fixed_50 | 0.235794 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_group_hgb | 0.240439 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_ccs_group_hgb_seed777/fold_stratified_patient_bootstrap.csv)；3 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| ccs_meps_group_hgb - ccs_only_hgb | -0.000236 | -0.001788 | 0.001205 | 0.364000 | 2000 | patient within fold |
-| ccs_meps_group_hgb - hgb_tuned | 0.001696 | -0.000046 | 0.003496 | 0.969000 | 2000 | patient within fold |
-| ccs_meps_group_hgb - ensemble_fixed_50 | 0.001458 | -0.000444 | 0.003334 | 0.930500 | 2000 | patient within fold |
-
-### meps_ccs_hgb_inner_cv_seed777
-
-CCS HGB 的舊版內層三折選模；修正後尚未有結果。
-
-來源：[原始指標](results/meps_ccs_hgb_inner_cv_seed777/summary.csv)；5 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_group_hgb | 0.238943 | 0.003691 |
-| ccs_meps_inner_cv | 0.237369 | 0.002765 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-| ccs_only_inner_cv | 0.237235 | 0.002812 |
-| hgb_tuned | 0.237247 | 0.002473 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_ccs_hgb_inner_cv_seed777/fold_results.csv)；25 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_group_hgb | 0.240689 |
-| 1 | ccs_only_inner_cv | 0.238358 |
-| 1 | ccs_meps_inner_cv | 0.239383 |
-| 2 | hgb_tuned | 0.235269 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_group_hgb | 0.232343 |
-| 2 | ccs_only_inner_cv | 0.232337 |
-| 2 | ccs_meps_inner_cv | 0.232635 |
-| 3 | hgb_tuned | 0.237747 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_group_hgb | 0.240531 |
-| 3 | ccs_only_inner_cv | 0.238691 |
-| 3 | ccs_meps_inner_cv | 0.239165 |
-| 4 | hgb_tuned | 0.241348 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_group_hgb | 0.240714 |
-| 4 | ccs_only_inner_cv | 0.237511 |
-| 4 | ccs_meps_inner_cv | 0.237348 |
-| 5 | hgb_tuned | 0.236067 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_group_hgb | 0.240439 |
-| 5 | ccs_only_inner_cv | 0.239277 |
-| 5 | ccs_meps_inner_cv | 0.238316 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_ccs_hgb_inner_cv_seed777/fold_stratified_patient_bootstrap.csv)；4 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| ccs_meps_inner_cv - ccs_only_inner_cv | 0.000135 | -0.001505 | 0.001813 | 0.570000 | 2000 | patient within fold |
-| ccs_meps_inner_cv - ccs_meps_group_hgb | -0.001574 | -0.003421 | 0.000402 | 0.063000 | 2000 | patient within fold |
-| ccs_meps_inner_cv - ccs_only_hgb | -0.001810 | -0.003748 | 0.000197 | 0.038000 | 2000 | patient within fold |
-| ccs_only_inner_cv - ccs_only_hgb | -0.001944 | -0.003610 | -0.000317 | 0.010000 | 2000 | patient within fold |
-
-### meps_cell_results
-
-MEPS 人口與利用率分群 cell 的群組統計接法。
-
-來源：[原始指標](results/meps_cell_results/summary.csv)；7 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| Direct_Demog | 0.235160 | 0.002529 | 0.679216 | 0.006877 | 0.290620 | 0.006669 | 0.095640 | 0.000191 |
-| Cell_ERIP | 0.234824 | 0.002102 | 0.677980 | 0.006551 | 0.290205 | 0.004155 | 0.095669 | 0.000190 |
-| Cell_Health | 0.234925 | 0.002326 | 0.678129 | 0.006885 | 0.290128 | 0.006251 | 0.095669 | 0.000197 |
-| Cell_Util | 0.234399 | 0.003411 | 0.677707 | 0.006581 | 0.288719 | 0.004261 | 0.095694 | 0.000221 |
-| Cell_All | 0.235131 | 0.002910 | 0.677912 | 0.006883 | 0.288700 | 0.003226 | 0.095679 | 0.000196 |
-| Direct_Demog_Cell_All | 0.234250 | 0.002961 | 0.678035 | 0.007065 | 0.290379 | 0.005925 | 0.095705 | 0.000215 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_cell_results/fold_results.csv)；35 列、8 欄。
-
-| Fold | Experiment | Features | AP | AUROC | F1 | Brier | Threshold |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 2456 | 0.238132 | 0.683548 | 0.293738 | 0.095449 | 0.140000 |
-| 1 | Direct_Demog | 2463 | 0.238640 | 0.683833 | 0.294180 | 0.095438 | 0.145000 |
-| 1 | Cell_ERIP | 2458 | 0.237248 | 0.683527 | 0.292965 | 0.095489 | 0.145000 |
-| 1 | Cell_Health | 2460 | 0.237506 | 0.683111 | 0.294941 | 0.095503 | 0.135000 |
-| 1 | Cell_Util | 2459 | 0.237223 | 0.682848 | 0.290096 | 0.095507 | 0.150000 |
-| 1 | Cell_All | 2465 | 0.236783 | 0.683022 | 0.291526 | 0.095538 | 0.145000 |
-| 1 | Direct_Demog_Cell_All | 2472 | 0.237655 | 0.684250 | 0.296276 | 0.095492 | 0.135000 |
-| 2 | Clinical | 2442 | 0.232633 | 0.667082 | 0.281598 | 0.095966 | 0.155000 |
-| 2 | Direct_Demog | 2449 | 0.233189 | 0.667639 | 0.278947 | 0.095927 | 0.155000 |
-| 2 | Cell_ERIP | 2444 | 0.232070 | 0.666842 | 0.285227 | 0.095990 | 0.135000 |
-| 2 | Cell_Health | 2446 | 0.232714 | 0.666349 | 0.280787 | 0.095988 | 0.155000 |
-| 2 | Cell_Util | 2445 | 0.230639 | 0.666415 | 0.282480 | 0.096059 | 0.135000 |
-| 2 | Cell_All | 2451 | 0.233052 | 0.666132 | 0.284588 | 0.096003 | 0.135000 |
-| 2 | Direct_Demog_Cell_All | 2458 | 0.231581 | 0.666362 | 0.281444 | 0.096044 | 0.145000 |
-| 3 | Clinical | 2454 | 0.232634 | 0.678819 | 0.291225 | 0.095713 | 0.150000 |
-| 3 | Direct_Demog | 2461 | 0.232325 | 0.679673 | 0.291918 | 0.095717 | 0.150000 |
-| 3 | Cell_ERIP | 2456 | 0.234362 | 0.678810 | 0.289332 | 0.095659 | 0.150000 |
-| 3 | Cell_Health | 2458 | 0.232560 | 0.678905 | 0.286569 | 0.095722 | 0.160000 |
-| 3 | Cell_Util | 2457 | 0.232463 | 0.678548 | 0.286864 | 0.095730 | 0.160000 |
-| 3 | Cell_All | 2463 | 0.233208 | 0.678601 | 0.286065 | 0.095707 | 0.160000 |
-| 3 | Direct_Demog_Cell_All | 2470 | 0.231868 | 0.677722 | 0.287818 | 0.095774 | 0.155000 |
-| 4 | Clinical | 2458 | 0.237260 | 0.678997 | 0.295133 | 0.095593 | 0.140000 |
-| 4 | Direct_Demog | 2465 | 0.236404 | 0.679968 | 0.295448 | 0.095602 | 0.135000 |
-| 4 | Cell_ERIP | 2460 | 0.236577 | 0.678809 | 0.295696 | 0.095610 | 0.135000 |
-| 4 | Cell_Health | 2462 | 0.237043 | 0.679224 | 0.293678 | 0.095589 | 0.135000 |
-| 4 | Cell_Util | 2461 | 0.238712 | 0.678863 | 0.293781 | 0.095546 | 0.135000 |
-| 4 | Cell_All | 2467 | 0.239496 | 0.679130 | 0.291688 | 0.095519 | 0.130000 |
-| 4 | Direct_Demog_Cell_All | 2474 | 0.237233 | 0.678920 | 0.294518 | 0.095592 | 0.135000 |
-| 5 | Clinical | 2445 | 0.233936 | 0.682955 | 0.291210 | 0.095599 | 0.145000 |
-| 5 | Direct_Demog | 2452 | 0.235243 | 0.684966 | 0.292609 | 0.095517 | 0.145000 |
-| 5 | Cell_ERIP | 2447 | 0.233863 | 0.681912 | 0.287806 | 0.095596 | 0.150000 |
-| 5 | Cell_Health | 2449 | 0.234806 | 0.683054 | 0.294667 | 0.095541 | 0.155000 |
-| 5 | Cell_Util | 2448 | 0.232958 | 0.681860 | 0.290374 | 0.095628 | 0.150000 |
-| 5 | Cell_All | 2454 | 0.233116 | 0.682674 | 0.289633 | 0.095628 | 0.150000 |
-| 5 | Direct_Demog_Cell_All | 2461 | 0.232914 | 0.682922 | 0.291840 | 0.095622 | 0.155000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_cell_results/patient_bootstrap.csv)；7 列、5 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive |
-| --- | --- | --- | --- | --- |
-| Direct_Demog - Clinical | 0.000054 | -0.000714 | 0.000848 | 0.585000 |
-| Cell_ERIP - Clinical | 0.000038 | -0.000733 | 0.000867 | 0.555000 |
-| Cell_Health - Clinical | -0.000004 | -0.001019 | 0.001079 | 0.520000 |
-| Cell_Util - Clinical | -0.000430 | -0.001524 | 0.000452 | 0.210000 |
-| Cell_All - Clinical | -0.000039 | -0.001157 | 0.001071 | 0.430000 |
-| Direct_Demog_Cell_All - Clinical | -0.000682 | -0.001927 | 0.000557 | 0.105000 |
-| Direct_Demog_Cell_All - Direct_Demog | -0.000737 | -0.001772 | 0.000304 | 0.075000 |
-
-### meps_embedding_tuned_results
-
-embedding 的巢狀調參接法。
-
-來源：[原始指標](results/meps_embedding_tuned_results/summary.csv)；2 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clinical | 0.209449 | 0.003982 | 0.651929 | 0.004454 | 0.264900 | 0.002870 | 0.097207 | 0.000219 |
-| multitask_tuned | 0.208415 | 0.005038 | 0.649419 | 0.007139 | 0.261986 | 0.005365 | 0.097290 | 0.000312 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_embedding_tuned_results/fold_results.csv)；10 列、12 欄。
-
-| AP | AUROC | F1 | Brier | Threshold | Trees | Fold | Experiment | embedding_dim | lambda_meps | EncoderEpochs | InnerValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.210695 | 0.653765 | 0.264592 | 0.097118 | 0.116580 | 168 | 1 | clinical | — | — | — | — |
-| 0.211537 | 0.653356 | 0.264610 | 0.097073 | 0.120054 | 204 | 1 | multitask_tuned | 16.000000 | 0.200000 | 20.000000 | 0.199509 |
-| 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.125534 | 122 | 2 | clinical | — | — | — | — |
-| 0.206915 | 0.638350 | 0.255364 | 0.097508 | 0.127664 | 55 | 2 | multitask_tuned | 8.000000 | 0.200000 | 4.000000 | 0.229490 |
-| 0.208805 | 0.654964 | 0.269756 | 0.097158 | 0.134574 | 236 | 3 | clinical | — | — | — | — |
-| 0.209803 | 0.654350 | 0.268129 | 0.097128 | 0.131443 | 217 | 3 | multitask_tuned | 16.000000 | 0.200000 | 2.000000 | 0.195324 |
-| 0.214110 | 0.656170 | 0.263164 | 0.096984 | 0.119052 | 139 | 4 | clinical | — | — | — | — |
-| 0.213353 | 0.654943 | 0.264405 | 0.097015 | 0.124810 | 127 | 4 | multitask_tuned | 16.000000 | 0.100000 | 9.000000 | 0.194148 |
-| 0.203221 | 0.649278 | 0.262419 | 0.097571 | 0.113508 | 86 | 5 | clinical | — | — | — | — |
-| 0.200464 | 0.646097 | 0.257424 | 0.097728 | 0.106659 | 63 | 5 | multitask_tuned | 8.000000 | 0.050000 | 19.000000 | 0.204277 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_embedding_tuned_results/patient_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| multitask_tuned - clinical | -0.001259 | -0.002438 | 0.000143 | 0.045000 | 200 |
-
-### meps_embedding_xgb_results
-
-MEPS 預訓練 embedding 接 XGBoost，與 random／shuffled 表徵控制比較。
-
-來源：[原始指標](results/meps_embedding_xgb_results/summary.csv)；5 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.005430 | 0.266374 | 0.003348 | 0.097167 | 0.000261 |
-| multitask | 0.209831 | 0.004777 | 0.651765 | 0.004188 | 0.262623 | 0.006032 | 0.097193 | 0.000283 |
-| pretrained | 0.209534 | 0.004720 | 0.650341 | 0.006147 | 0.264637 | 0.004123 | 0.097239 | 0.000289 |
-| random | 0.209019 | 0.003837 | 0.650207 | 0.006884 | 0.264681 | 0.005476 | 0.097265 | 0.000209 |
-| shuffled | 0.208424 | 0.004856 | 0.649162 | 0.008438 | 0.262033 | 0.007659 | 0.097310 | 0.000355 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_embedding_xgb_results/fold_results.csv)；25 列、8 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Trees |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 0.211610 | 0.655509 | 0.268027 | 0.097049 | 0.121627 | 232 |
-| 1 | random | 0.209109 | 0.650730 | 0.261625 | 0.097250 | 0.116841 | 118 |
-| 1 | pretrained | 0.211916 | 0.653135 | 0.268437 | 0.097056 | 0.120632 | 197 |
-| 1 | multitask | 0.210038 | 0.653826 | 0.268740 | 0.097113 | 0.120054 | 204 |
-| 1 | shuffled | 0.210217 | 0.652079 | 0.266898 | 0.097140 | 0.126617 | 171 |
-| 2 | clinical | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.125534 | 122 |
-| 2 | random | 0.208053 | 0.638380 | 0.256944 | 0.097488 | 0.132783 | 51 |
-| 2 | pretrained | 0.208651 | 0.640961 | 0.258170 | 0.097355 | 0.130592 | 72 |
-| 2 | multitask | 0.211240 | 0.646442 | 0.258104 | 0.097170 | 0.140187 | 113 |
-| 2 | shuffled | 0.205182 | 0.634812 | 0.248647 | 0.097773 | 0.133442 | 36 |
-| 3 | clinical | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 0.133370 | 260 |
-| 3 | random | 0.209555 | 0.653406 | 0.270708 | 0.097155 | 0.131401 | 228 |
-| 3 | pretrained | 0.209476 | 0.653269 | 0.267801 | 0.097163 | 0.133960 | 172 |
-| 3 | multitask | 0.211369 | 0.654877 | 0.266630 | 0.097063 | 0.131443 | 217 |
-| 3 | shuffled | 0.209013 | 0.651845 | 0.262859 | 0.097213 | 0.127992 | 139 |
-| 4 | clinical | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 0.129450 | 219 |
-| 4 | random | 0.214556 | 0.656035 | 0.265824 | 0.096985 | 0.123072 | 117 |
-| 4 | pretrained | 0.215202 | 0.656646 | 0.263497 | 0.096942 | 0.124178 | 125 |
-| 4 | multitask | 0.214652 | 0.655573 | 0.265110 | 0.096942 | 0.123304 | 145 |
-| 4 | shuffled | 0.215173 | 0.657066 | 0.266752 | 0.096871 | 0.128391 | 212 |
-| 5 | clinical | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 0.113508 | 86 |
-| 5 | random | 0.203822 | 0.652486 | 0.268303 | 0.097448 | 0.117409 | 125 |
-| 5 | pretrained | 0.202426 | 0.647693 | 0.265279 | 0.097678 | 0.128416 | 55 |
-| 5 | multitask | 0.201853 | 0.648108 | 0.254532 | 0.097676 | 0.108220 | 59 |
-| 5 | shuffled | 0.202533 | 0.650009 | 0.265009 | 0.097553 | 0.115292 | 87 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_embedding_xgb_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| random - clinical | -0.001023 | -0.002689 | 0.000427 | 0.065000 | 200 |
-| pretrained - clinical | -0.000640 | -0.002118 | 0.000671 | 0.165000 | 200 |
-| multitask - clinical | -0.000232 | -0.001357 | 0.001050 | 0.365000 | 200 |
-| shuffled - clinical | -0.001677 | -0.003175 | -0.000250 | 0.015000 | 200 |
-
-### meps_event_blend_results
-
-MEPS 精確事件風險直接加入與權重融合。
-
-來源：[原始指標](results/meps_event_blend_results/summary.csv)；7 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_event | 0.209904 | 0.004473 | 0.652868 | 0.266526 | 0.097720 | 0.290000 |
-| blend_random | 0.209852 | 0.004565 | 0.652761 | 0.266270 | 0.097399 | 0.130000 |
-| blend_shuffled | 0.209914 | 0.004454 | 0.652886 | 0.266338 | 0.097173 | 0.010000 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 | 0.000000 |
-| risk_event | 0.111573 | 0.001663 | 0.494876 | 0.126364 | 0.100923 | 1.000000 |
-| risk_random | 0.115894 | 0.001882 | 0.502536 | 0.203109 | 0.100920 | 1.000000 |
-| risk_shuffled | 0.117641 | 0.001124 | 0.513900 | 0.204762 | 0.100902 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_event_blend_results/fold_results.csv)；35 列、11 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | ClinicalValidationAP | AP | AUROC | F1 | Brier | RiskValidationAP | BlendValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 232 | 0.000000 | 0.195948 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | — | — |
-| 1 | risk_random | 232 | 1.000000 | 0.195948 | 0.115726 | 0.498198 | 0.203463 | 0.100970 | 0.109080 | 0.195953 |
-| 1 | blend_random | 232 | 0.150000 | 0.195948 | 0.211584 | 0.655516 | 0.268234 | 0.097201 | 0.109080 | 0.195953 |
-| 1 | risk_event | 232 | 1.000000 | 0.195948 | 0.114074 | 0.498770 | 0.018341 | 0.100963 | 0.109729 | 0.195955 |
-| 1 | blend_event | 232 | 0.600000 | 0.195948 | 0.211637 | 0.655510 | 0.269618 | 0.098578 | 0.109729 | 0.195955 |
-| 1 | risk_shuffled | 232 | 1.000000 | 0.195948 | 0.116003 | 0.506504 | 0.202328 | 0.100962 | 0.110716 | 0.195948 |
-| 1 | blend_shuffled | 232 | 0.050000 | 0.195948 | 0.211596 | 0.655501 | 0.267845 | 0.097082 | 0.110716 | 0.195948 |
-| 2 | clinical | 122 | 0.000000 | 0.228711 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | — | — |
-| 2 | risk_random | 122 | 1.000000 | 0.228711 | 0.114222 | 0.502464 | 0.204602 | 0.100923 | 0.119340 | 0.228711 |
-| 2 | blend_random | 122 | 0.000000 | 0.228711 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.119340 | 0.228711 |
-| 2 | risk_event | 122 | 1.000000 | 0.228711 | 0.110100 | 0.495654 | 0.204510 | 0.100928 | 0.117468 | 0.228712 |
-| 2 | blend_event | 122 | 0.150000 | 0.228711 | 0.210411 | 0.645467 | 0.264536 | 0.097357 | 0.117468 | 0.228712 |
-| 2 | risk_shuffled | 122 | 1.000000 | 0.228711 | 0.118060 | 0.519690 | 0.205431 | 0.100898 | 0.119669 | 0.228711 |
-| 2 | blend_shuffled | 122 | 0.000000 | 0.228711 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.119669 | 0.228711 |
-| 3 | clinical | 260 | 0.000000 | 0.195288 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | — | — |
-| 3 | risk_random | 260 | 1.000000 | 0.195288 | 0.119009 | 0.512634 | 0.203541 | 0.100880 | 0.111035 | 0.195288 |
-| 3 | blend_random | 260 | 0.000000 | 0.195288 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 0.111035 | 0.195288 |
-| 3 | risk_event | 260 | 1.000000 | 0.195288 | 0.110787 | 0.488944 | 0.204530 | 0.100906 | 0.110290 | 0.195302 |
-| 3 | blend_event | 260 | 0.100000 | 0.195288 | 0.208849 | 0.655128 | 0.270591 | 0.097205 | 0.110290 | 0.195302 |
-| 3 | risk_shuffled | 260 | 1.000000 | 0.195288 | 0.117121 | 0.514721 | 0.205673 | 0.100872 | 0.111367 | 0.195288 |
-| 3 | blend_shuffled | 260 | 0.000000 | 0.195288 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 0.111367 | 0.195288 |
-| 4 | clinical | 219 | 0.000000 | 0.194265 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | — | — |
-| 4 | risk_random | 219 | 1.000000 | 0.194265 | 0.115898 | 0.506772 | 0.204440 | 0.100919 | 0.115988 | 0.194265 |
-| 4 | blend_random | 219 | 0.000000 | 0.194265 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 0.115988 | 0.194265 |
-| 4 | risk_event | 219 | 1.000000 | 0.194265 | 0.110453 | 0.494845 | 0.000000 | 0.100924 | 0.110580 | 0.194267 |
-| 4 | blend_event | 219 | 0.150000 | 0.194265 | 0.215433 | 0.659047 | 0.265415 | 0.097049 | 0.110580 | 0.194267 |
-| 4 | risk_shuffled | 219 | 1.000000 | 0.194265 | 0.118966 | 0.521960 | 0.206741 | 0.100889 | 0.114036 | 0.194265 |
-| 4 | blend_shuffled | 219 | 0.000000 | 0.194265 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 0.114036 | 0.194265 |
-| 5 | clinical | 86 | 0.000000 | 0.202908 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | — | — |
-| 5 | risk_random | 86 | 1.000000 | 0.202908 | 0.114614 | 0.492612 | 0.199497 | 0.100906 | 0.116213 | 0.203079 |
-| 5 | blend_random | 86 | 0.500000 | 0.202908 | 0.202923 | 0.648641 | 0.261694 | 0.098578 | 0.116213 | 0.203079 |
-| 5 | risk_event | 86 | 1.000000 | 0.202908 | 0.112449 | 0.496165 | 0.204438 | 0.100895 | 0.108707 | 0.202913 |
-| 5 | blend_event | 86 | 0.450000 | 0.202908 | 0.203188 | 0.649190 | 0.262469 | 0.098414 | 0.108707 | 0.202913 |
-| 5 | risk_shuffled | 86 | 1.000000 | 0.202908 | 0.118053 | 0.506623 | 0.203638 | 0.100887 | 0.113336 | 0.202908 |
-| 5 | blend_shuffled | 86 | 0.000000 | 0.202908 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 0.113336 | 0.202908 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_blend_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_event - risk_shuffled | -0.004654 | -0.007557 | -0.001724 | 0.001000 | 1000 |
-| blend_event - blend_shuffled | -0.004471 | -0.006417 | -0.002853 | 0.000000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_blend_results/patient_bootstrap.csv)；6 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_random - clinical | -0.093357 | -0.102275 | -0.084643 | 0.000000 | 1000 |
-| blend_random - clinical | -0.002834 | -0.004193 | -0.001547 | 0.000000 | 1000 |
-| risk_event - clinical | -0.096264 | -0.104898 | -0.088393 | 0.000000 | 1000 |
-| blend_event - clinical | -0.004457 | -0.006595 | -0.002555 | 0.000000 | 1000 |
-| risk_shuffled - clinical | -0.091610 | -0.100405 | -0.083089 | 0.000000 | 1000 |
-| blend_shuffled - clinical | 0.000015 | -0.000157 | 0.000173 | 0.531000 | 1000 |
-
-### meps_event_ccs_group_hgb_seed777
-
-以 MEPS 真實住院事件及 CCS 群組接 HGB 的主實驗。
-
-來源：[原始指標](results/meps_event_ccs_group_hgb_seed777/summary.csv)；4 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_group_hgb | 0.239077 | 0.003672 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-| ensemble_fixed_50 | 0.237485 | 0.002471 |
-| hgb_tuned | 0.237247 | 0.002473 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_event_ccs_group_hgb_seed777/fold_results.csv)；20 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 |
-| 1 | ensemble_fixed_50 | 0.238204 |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_group_hgb | 0.239263 |
-| 2 | hgb_tuned | 0.235269 |
-| 2 | ensemble_fixed_50 | 0.235174 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_group_hgb | 0.233462 |
-| 3 | hgb_tuned | 0.237747 |
-| 3 | ensemble_fixed_50 | 0.236854 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_group_hgb | 0.238764 |
-| 4 | hgb_tuned | 0.241348 |
-| 4 | ensemble_fixed_50 | 0.241398 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_group_hgb | 0.243650 |
-| 5 | hgb_tuned | 0.236067 |
-| 5 | ensemble_fixed_50 | 0.235794 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_group_hgb | 0.240247 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_ccs_group_hgb_seed777/fold_stratified_patient_bootstrap.csv)；3 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| ccs_meps_group_hgb - ccs_only_hgb | -0.000102 | -0.001709 | 0.001322 | 0.425500 | 2000 | patient within fold |
-| ccs_meps_group_hgb - hgb_tuned | 0.001830 | 0.000098 | 0.003409 | 0.980000 | 2000 | patient within fold |
-| ccs_meps_group_hgb - ensemble_fixed_50 | 0.001592 | -0.000244 | 0.003206 | 0.956000 | 2000 | patient within fold |
-
-### meps_event_ccs_soft_seed777
-
-MEPS event-CCS soft prefix／階層群組及 shuffled 控制。
-
-來源：[原始指標](results/meps_event_ccs_soft_seed777/summary.csv)；6 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_group_hgb | 0.239077 | 0.003672 |
-| ccs_meps_soft_hgb | 0.237349 | 0.003665 |
-| ccs_meps_soft_shuffled | 0.234799 | 0.002483 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-| ensemble_fixed_50 | 0.237485 | 0.002471 |
-| hgb_tuned | 0.237247 | 0.002473 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_event_ccs_soft_seed777/fold_results.csv)；30 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 |
-| 1 | ensemble_fixed_50 | 0.238204 |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_group_hgb | 0.239263 |
-| 1 | ccs_meps_soft_hgb | 0.235811 |
-| 1 | ccs_meps_soft_shuffled | 0.236134 |
-| 2 | hgb_tuned | 0.235269 |
-| 2 | ensemble_fixed_50 | 0.235174 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_group_hgb | 0.233462 |
-| 2 | ccs_meps_soft_hgb | 0.231866 |
-| 2 | ccs_meps_soft_shuffled | 0.231095 |
-| 3 | hgb_tuned | 0.237747 |
-| 3 | ensemble_fixed_50 | 0.236854 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_group_hgb | 0.238764 |
-| 3 | ccs_meps_soft_hgb | 0.240934 |
-| 3 | ccs_meps_soft_shuffled | 0.235389 |
-| 4 | hgb_tuned | 0.241348 |
-| 4 | ensemble_fixed_50 | 0.241398 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_group_hgb | 0.243650 |
-| 4 | ccs_meps_soft_hgb | 0.237937 |
-| 4 | ccs_meps_soft_shuffled | 0.237589 |
-| 5 | hgb_tuned | 0.236067 |
-| 5 | ensemble_fixed_50 | 0.235794 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_group_hgb | 0.240247 |
-| 5 | ccs_meps_soft_hgb | 0.240198 |
-| 5 | ccs_meps_soft_shuffled | 0.233788 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_ccs_soft_seed777/fold_stratified_patient_bootstrap.csv)；6 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| ccs_meps_group_hgb - ccs_only_hgb | -0.000102 | -0.001709 | 0.001322 | 0.425500 | 2000 | patient within fold |
-| ccs_meps_group_hgb - hgb_tuned | 0.001830 | 0.000098 | 0.003409 | 0.980000 | 2000 | patient within fold |
-| ccs_meps_group_hgb - ensemble_fixed_50 | 0.001592 | -0.000244 | 0.003206 | 0.956000 | 2000 | patient within fold |
-| ccs_meps_soft_hgb - ccs_only_hgb | -0.001830 | -0.003728 | 0.000018 | 0.026500 | 2000 | patient within fold |
-| ccs_meps_soft_hgb - ccs_meps_group_hgb | -0.001728 | -0.003557 | 0.000259 | 0.045500 | 2000 | patient within fold |
-| ccs_meps_soft_hgb - ccs_meps_soft_shuffled | 0.002550 | 0.000397 | 0.004678 | 0.993000 | 2000 | patient within fold |
-
-### meps_event_rank_correction_seed777
-
-MEPS event 風險固定排名校正與驗證集門控校正。
-
-來源：[原始指標](results/meps_event_rank_correction_seed777/summary.csv)；6 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_group_hgb | 0.238943 | 0.003691 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-| fixed_ccs_hgb | 0.238865 | 0.001472 |
-| hgb_tuned | 0.237247 | 0.002473 |
-| meps_rank_fixed_025 | 0.238504 | 0.001567 |
-| meps_rank_gated | 0.238734 | 0.001654 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_event_rank_correction_seed777/fold_results.csv)；30 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_group_hgb | 0.240689 |
-| 1 | fixed_ccs_hgb | 0.240559 |
-| 1 | meps_rank_fixed_025 | 0.240075 |
-| 1 | meps_rank_gated | 0.240559 |
-| 2 | hgb_tuned | 0.235269 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_group_hgb | 0.232343 |
-| 2 | fixed_ccs_hgb | 0.237398 |
-| 2 | meps_rank_fixed_025 | 0.236739 |
-| 2 | meps_rank_gated | 0.236739 |
-| 3 | hgb_tuned | 0.237747 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_group_hgb | 0.240531 |
-| 3 | fixed_ccs_hgb | 0.240063 |
-| 3 | meps_rank_fixed_025 | 0.240242 |
-| 3 | meps_rank_gated | 0.240063 |
-| 4 | hgb_tuned | 0.241348 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_group_hgb | 0.240714 |
-| 4 | fixed_ccs_hgb | 0.237382 |
-| 4 | meps_rank_fixed_025 | 0.237843 |
-| 4 | meps_rank_gated | 0.237382 |
-| 5 | hgb_tuned | 0.236067 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_group_hgb | 0.240439 |
-| 5 | fixed_ccs_hgb | 0.238925 |
-| 5 | meps_rank_fixed_025 | 0.237619 |
-| 5 | meps_rank_gated | 0.238925 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_rank_correction_seed777/fold_stratified_patient_bootstrap.csv)；5 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| meps_rank_fixed_025 - fixed_ccs_hgb | -0.000362 | -0.000868 | 0.000193 | 0.095000 | 2000 | patient within fold |
-| meps_rank_gated - fixed_ccs_hgb | -0.000132 | -0.000364 | 0.000103 | 0.134500 | 2000 | patient within fold |
-| meps_rank_gated - ccs_only_hgb | -0.000445 | -0.002133 | 0.001202 | 0.295500 | 2000 | patient within fold |
-| meps_rank_gated - ccs_meps_group_hgb | -0.000209 | -0.002039 | 0.001645 | 0.425500 | 2000 | patient within fold |
-| meps_rank_gated - hgb_tuned | 0.001487 | -0.000347 | 0.003295 | 0.941500 | 2000 | patient within fold |
-
-### meps_event_transfer_results
-
-MEPS 精確事件 30 天標籤的預訓練遷移。
-
-來源：[原始指標](results/meps_event_transfer_results/summary.csv)；4 列、6 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean |
-| --- | --- | --- | --- | --- | --- |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 |
-| event_pretrained | 0.208973 | 0.004424 | 0.651108 | 0.265863 | 0.097233 |
-| event_shuffled | 0.208450 | 0.005796 | 0.649511 | 0.263301 | 0.097332 |
-| random_risk | 0.208354 | 0.005582 | 0.649362 | 0.265291 | 0.097327 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_event_transfer_results/fold_results.csv)；20 列、8 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Trees |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 0.211610 | 0.655509 | 0.268027 | 0.097049 | 0.121627 | 232 |
-| 1 | random_risk | 0.211699 | 0.653506 | 0.271191 | 0.097097 | 0.132947 | 172 |
-| 1 | event_pretrained | 0.210443 | 0.651623 | 0.269256 | 0.097180 | 0.130099 | 122 |
-| 1 | event_shuffled | 0.211398 | 0.652162 | 0.268029 | 0.097153 | 0.124221 | 124 |
-| 2 | clinical | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.125534 | 122 |
-| 2 | random_risk | 0.204042 | 0.634412 | 0.256094 | 0.097810 | 0.126731 | 36 |
-| 2 | event_pretrained | 0.206216 | 0.639554 | 0.256845 | 0.097494 | 0.122401 | 63 |
-| 2 | event_shuffled | 0.203981 | 0.633813 | 0.250038 | 0.097885 | 0.131006 | 33 |
-| 3 | clinical | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 0.133370 | 260 |
-| 3 | random_risk | 0.208694 | 0.653703 | 0.271374 | 0.097173 | 0.136387 | 260 |
-| 3 | event_pretrained | 0.208375 | 0.653337 | 0.269442 | 0.097196 | 0.138285 | 267 |
-| 3 | event_shuffled | 0.209268 | 0.654636 | 0.269300 | 0.097142 | 0.132768 | 261 |
-| 4 | clinical | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 0.129450 | 219 |
-| 4 | random_risk | 0.215545 | 0.657940 | 0.265971 | 0.096869 | 0.125219 | 181 |
-| 4 | event_pretrained | 0.215677 | 0.659049 | 0.266717 | 0.096843 | 0.126650 | 208 |
-| 4 | event_shuffled | 0.216041 | 0.659067 | 0.267563 | 0.096822 | 0.127203 | 210 |
-| 5 | clinical | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 0.113508 | 86 |
-| 5 | random_risk | 0.201793 | 0.647250 | 0.261826 | 0.097687 | 0.114417 | 59 |
-| 5 | event_pretrained | 0.204155 | 0.651977 | 0.267056 | 0.097451 | 0.114171 | 129 |
-| 5 | event_shuffled | 0.201564 | 0.647876 | 0.261575 | 0.097660 | 0.114247 | 66 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_transfer_results/external_signal_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| event_pretrained - event_shuffled | 0.000959 | 0.000164 | 0.001793 | 0.992000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_event_transfer_results/patient_bootstrap.csv)；3 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| random_risk - clinical | -0.001782 | -0.002955 | -0.000686 | 0.000000 | 1000 |
-| event_pretrained - clinical | -0.000937 | -0.001863 | -0.000108 | 0.017000 | 1000 |
-| event_shuffled - clinical | -0.001896 | -0.003148 | -0.000802 | 0.000000 | 1000 |
-
-### meps_group_prior_hgb_seed777
-
-醫院群組率先驗對 MEPS 群組率先驗。
-
-來源：[原始指標](results/meps_group_prior_hgb_seed777/summary.csv)；4 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_group_hgb | 0.238943 | 0.003691 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-| hospital_group_prior | 0.237010 | 0.002113 |
-| meps_group_prior | 0.235659 | 0.002210 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_group_prior_hgb_seed777/fold_results.csv)；20 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_group_hgb | 0.240689 |
-| 1 | hospital_group_prior | 0.239666 |
-| 1 | meps_group_prior | 0.234630 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_group_hgb | 0.232343 |
-| 2 | hospital_group_prior | 0.234617 |
-| 2 | meps_group_prior | 0.232316 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_group_hgb | 0.240531 |
-| 3 | hospital_group_prior | 0.236674 |
-| 3 | meps_group_prior | 0.237373 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_group_hgb | 0.240714 |
-| 4 | hospital_group_prior | 0.235472 |
-| 4 | meps_group_prior | 0.236344 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_group_hgb | 0.240439 |
-| 5 | hospital_group_prior | 0.238623 |
-| 5 | meps_group_prior | 0.237634 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_group_prior_hgb_seed777/fold_stratified_patient_bootstrap.csv)；4 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| meps_group_prior - hospital_group_prior | -0.001351 | -0.002912 | 0.000293 | 0.052500 | 2000 | patient within fold |
-| meps_group_prior - ccs_meps_group_hgb | -0.003284 | -0.005327 | -0.001112 | 0.000500 | 2000 | patient within fold |
-| meps_group_prior - ccs_only_hgb | -0.003520 | -0.005493 | -0.001545 | 0.000500 | 2000 | patient within fold |
-| hospital_group_prior - ccs_only_hgb | -0.002169 | -0.004109 | -0.000135 | 0.020500 | 2000 | patient within fold |
-
-### meps_harmonized_weighted_residual_seed777
-
-對齊診斷與來源權重後的 MEPS residual 校正。
-
-來源：[原始指標](results/meps_harmonized_weighted_residual_seed777/summary.csv)；3 列、5 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean |
-| --- | --- | --- | --- | --- |
-| ensemble_fixed_50 | 0.237485 | 0.002471 | 0.678561 | 0.096527 |
-| hgb_tuned | 0.237247 | 0.002473 | 0.676933 | 0.095573 |
-| meps_residual | 0.237102 | 0.002599 | 0.676994 | 0.095566 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_harmonized_weighted_residual_seed777/fold_results.csv)；15 列、5 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier |
-| --- | --- | --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 | 0.677889 | 0.095651 |
-| 1 | meps_residual | 0.235523 | 0.678279 | 0.095610 |
-| 2 | hgb_tuned | 0.235269 | 0.666667 | 0.095854 |
-| 2 | meps_residual | 0.234854 | 0.666582 | 0.095863 |
-| 3 | hgb_tuned | 0.237747 | 0.680836 | 0.095485 |
-| 3 | meps_residual | 0.237717 | 0.680834 | 0.095482 |
-| 4 | hgb_tuned | 0.241348 | 0.678252 | 0.095374 |
-| 4 | meps_residual | 0.241348 | 0.678252 | 0.095374 |
-| 5 | hgb_tuned | 0.236067 | 0.681022 | 0.095501 |
-| 5 | meps_residual | 0.236067 | 0.681022 | 0.095501 |
-| 1 | ensemble_fixed_50 | 0.238204 | 0.681874 | 0.097052 |
-| 2 | ensemble_fixed_50 | 0.235174 | 0.667987 | 0.095828 |
-| 3 | ensemble_fixed_50 | 0.236854 | 0.680959 | 0.097280 |
-| 4 | ensemble_fixed_50 | 0.241398 | 0.680223 | 0.096980 |
-| 5 | ensemble_fixed_50 | 0.235794 | 0.681760 | 0.095496 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_harmonized_weighted_residual_seed777/fold_stratified_patient_bootstrap.csv)；3 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| meps_residual - hgb_tuned | -0.000145 | -0.000306 | 0.000090 | 0.159500 | 2000 | patient within fold |
-| meps_residual - ensemble_fixed_50 | -0.000383 | -0.001706 | 0.001062 | 0.310500 | 2000 | patient within fold |
-| ensemble_fixed_50 - hgb_tuned | 0.000238 | -0.001140 | 0.001623 | 0.640500 | 2000 | patient within fold |
-
-### meps_hgb_results
-
-46 欄 HGB 與 MEPS HGB 風險的 seed 777 對照。
-
-來源：[原始指標](results/meps_hgb_results/summary.csv)；2 列、6 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean | Iterations_mean |
-| --- | --- | --- | --- | --- | --- |
-| Clinical_HGB | 0.235741 | 0.002170 | 0.674921 | 0.095676 | 184.400000 |
-| MEPS_HGB | 0.235495 | 0.003513 | 0.674701 | 0.095697 | 161.200000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_hgb_results/fold_results.csv)；10 列、7 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier | Iterations | EncodedFeatures |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical_HGB | 0.236849 | 0.677759 | 0.095604 | 239 | 516 |
-| 1 | MEPS_HGB | 0.234097 | 0.677333 | 0.095721 | 155 | 518 |
-| 2 | Clinical_HGB | 0.232296 | 0.664121 | 0.095970 | 169 | 519 |
-| 2 | MEPS_HGB | 0.232027 | 0.663728 | 0.096009 | 153 | 521 |
-| 3 | Clinical_HGB | 0.238121 | 0.679219 | 0.095522 | 241 | 519 |
-| 3 | MEPS_HGB | 0.241392 | 0.679159 | 0.095391 | 170 | 521 |
-| 4 | Clinical_HGB | 0.235535 | 0.674355 | 0.095701 | 151 | 517 |
-| 4 | MEPS_HGB | 0.235159 | 0.673986 | 0.095758 | 135 | 519 |
-| 5 | Clinical_HGB | 0.235902 | 0.679150 | 0.095585 | 122 | 520 |
-| 5 | MEPS_HGB | 0.234799 | 0.679299 | 0.095603 | 193 | 522 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_hgb_results/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2471 | 1589 | 0.224201 | 0.239089 | 0.532298 |
-| MEPS_IP_2 | 2471 | 1589 | 0.163497 | 0.206413 | 0.570640 |
-| MEPS_ER_6 | 2466 | 1585 | 0.224655 | 0.314239 | 0.619365 |
-| MEPS_IP_6 | 2466 | 1585 | 0.163828 | 0.257526 | 0.646767 |
-| MEPS_ER_8 | 2466 | 1585 | 0.224655 | 0.322382 | 0.628991 |
-| MEPS_IP_8 | 2466 | 1585 | 0.163828 | 0.283542 | 0.668979 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_hgb_results/patient_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_HGB - Clinical_HGB | -0.000407 | -0.002015 | 0.001222 | 0.289000 | 1000 |
-
-### meps_hgb_seed2024
-
-46 欄 HGB 與 MEPS HGB 在 seed 2024 的對照。
-
-來源：[原始指標](results/meps_hgb_seed2024/summary.csv)；2 列、6 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean | Iterations_mean |
-| --- | --- | --- | --- | --- | --- |
-| Clinical_HGB | 0.235085 | 0.012140 | 0.674264 | 0.095719 | 129.200000 |
-| MEPS_HGB | 0.235867 | 0.012914 | 0.673560 | 0.095705 | 135.400000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_hgb_seed2024/fold_results.csv)；10 列、7 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier | Iterations | EncodedFeatures |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical_HGB | 0.215726 | 0.662369 | 0.096799 | 170 | 521 |
-| 1 | MEPS_HGB | 0.215513 | 0.661046 | 0.096843 | 137 | 523 |
-| 2 | Clinical_HGB | 0.245588 | 0.678817 | 0.095196 | 140 | 521 |
-| 2 | MEPS_HGB | 0.248500 | 0.678493 | 0.095096 | 125 | 523 |
-| 3 | Clinical_HGB | 0.231067 | 0.677725 | 0.095830 | 100 | 518 |
-| 3 | MEPS_HGB | 0.231661 | 0.676987 | 0.095822 | 119 | 520 |
-| 4 | Clinical_HGB | 0.239877 | 0.675388 | 0.095519 | 124 | 519 |
-| 4 | MEPS_HGB | 0.240345 | 0.675061 | 0.095524 | 120 | 521 |
-| 5 | Clinical_HGB | 0.243168 | 0.677021 | 0.095252 | 112 | 519 |
-| 5 | MEPS_HGB | 0.243314 | 0.676210 | 0.095241 | 176 | 521 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_hgb_seed2024/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2491 | 1587 | 0.217182 | 0.238443 | 0.526942 |
-| MEPS_IP_2 | 2491 | 1587 | 0.165797 | 0.206823 | 0.561199 |
-| MEPS_ER_6 | 2486 | 1584 | 0.217216 | 0.304237 | 0.609930 |
-| MEPS_IP_6 | 2486 | 1584 | 0.165728 | 0.252498 | 0.630851 |
-| MEPS_ER_8 | 2486 | 1584 | 0.217216 | 0.310056 | 0.621380 |
-| MEPS_IP_8 | 2486 | 1584 | 0.165728 | 0.279789 | 0.649179 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_hgb_seed2024/patient_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_HGB - Clinical_HGB | 0.000562 | -0.000760 | 0.001927 | 0.785000 | 1000 |
-
-### meps_hgb_seed3407
-
-46 欄 HGB 與 MEPS HGB 在 seed 3407 的對照。
-
-來源：[原始指標](results/meps_hgb_seed3407/summary.csv)；2 列、6 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean | Iterations_mean |
-| --- | --- | --- | --- | --- | --- |
-| Clinical_HGB | 0.234257 | 0.007153 | 0.673408 | 0.095724 | 149.400000 |
-| MEPS_HGB | 0.232447 | 0.005303 | 0.672528 | 0.095811 | 173.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_hgb_seed3407/fold_results.csv)；10 列、7 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier | Iterations | EncodedFeatures |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical_HGB | 0.231101 | 0.673314 | 0.095864 | 165 | 514 |
-| 1 | MEPS_HGB | 0.232319 | 0.675344 | 0.095805 | 148 | 516 |
-| 2 | Clinical_HGB | 0.226810 | 0.673349 | 0.096049 | 154 | 524 |
-| 2 | MEPS_HGB | 0.226805 | 0.672969 | 0.096029 | 156 | 526 |
-| 3 | Clinical_HGB | 0.231458 | 0.674335 | 0.095810 | 101 | 522 |
-| 3 | MEPS_HGB | 0.228488 | 0.674363 | 0.095945 | 184 | 524 |
-| 4 | Clinical_HGB | 0.236399 | 0.671728 | 0.095643 | 165 | 516 |
-| 4 | MEPS_HGB | 0.234339 | 0.669875 | 0.095764 | 140 | 518 |
-| 5 | Clinical_HGB | 0.245517 | 0.674315 | 0.095254 | 162 | 514 |
-| 5 | MEPS_HGB | 0.240281 | 0.670089 | 0.095512 | 237 | 516 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_hgb_seed3407/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2441 | 1584 | 0.211389 | 0.228803 | 0.529637 |
-| MEPS_IP_2 | 2441 | 1584 | 0.152397 | 0.182588 | 0.552135 |
-| MEPS_ER_6 | 2435 | 1580 | 0.211910 | 0.285997 | 0.609878 |
-| MEPS_IP_6 | 2435 | 1580 | 0.152772 | 0.226312 | 0.616951 |
-| MEPS_ER_8 | 2435 | 1580 | 0.211910 | 0.300958 | 0.632032 |
-| MEPS_IP_8 | 2435 | 1580 | 0.152772 | 0.250754 | 0.645372 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_hgb_seed3407/patient_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_HGB - Clinical_HGB | -0.001956 | -0.003566 | -0.000372 | 0.008000 | 1000 |
-
-### meps_hgb_xgb_ensemble
-
-三 seed 的 HGB／XGBoost OOF 平均後計算 pooled AP，只有 pooled 指標。
-
-來源：[原始指標](results/meps_hgb_xgb_ensemble/summary.csv)；5 列、2 欄。
-
-| Experiment | Pooled_PR_AUC |
-| --- | --- |
-| hgb | 0.238323 |
-| clinical_xgb | 0.234410 |
-| meps_xgb | 0.235077 |
-| no_external | 0.237798 |
-| external | 0.238312 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_hgb_xgb_ensemble/patient_bootstrap.csv)；3 列、6 欄。
-
-| Comparison | Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| external - hgb | -0.000011 | -0.001417 | 0.001413 | 0.511000 | 1000 |
-| external - meps_xgb | 0.003235 | 0.002036 | 0.004524 | 1.000000 | 1000 |
-| external - no_external | 0.000514 | 0.000108 | 0.000924 | 0.993000 | 1000 |
-
-### meps_longitudinal_aligned_results
-
-MEPS 相鄰年度標籤對齊的 MLP 預訓練／多任務實驗。
-
-來源：[原始指標](results/meps_longitudinal_aligned_results/summary.csv)；4 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| aligned_mtl | 0.201502 | 0.007496 | 0.643669 | 0.003503 | 0.256505 | 0.004906 | 0.097639 | 0.000291 |
-| aligned_pretrained | 0.201978 | 0.007046 | 0.644105 | 0.002908 | 0.256983 | 0.006787 | 0.097624 | 0.000284 |
-| aligned_shuffled_mtl | 0.201338 | 0.007127 | 0.644054 | 0.002631 | 0.256171 | 0.003948 | 0.097648 | 0.000274 |
-| uci_only | 0.200808 | 0.007165 | 0.643094 | 0.002347 | 0.257244 | 0.003409 | 0.097686 | 0.000289 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_aligned_results/fold_results.csv)；20 列、9 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Epochs | InnerValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | uci_only | 0.209248 | 0.644386 | 0.259065 | 0.097370 | 0.124988 | 12 | 0.187986 |
-| 1 | aligned_pretrained | 0.209118 | 0.645945 | 0.263707 | 0.097345 | 0.131800 | 12 | 0.189080 |
-| 1 | aligned_mtl | 0.208564 | 0.645645 | 0.261426 | 0.097370 | 0.130361 | 12 | 0.189068 |
-| 1 | aligned_shuffled_mtl | 0.209517 | 0.645890 | 0.259578 | 0.097348 | 0.125391 | 12 | 0.188856 |
-| 2 | uci_only | 0.203512 | 0.643901 | 0.260460 | 0.097574 | 0.136340 | 12 | 0.217077 |
-| 2 | aligned_pretrained | 0.204976 | 0.644585 | 0.259061 | 0.097478 | 0.125425 | 11 | 0.219907 |
-| 2 | aligned_mtl | 0.205069 | 0.644670 | 0.257003 | 0.097483 | 0.126118 | 11 | 0.219805 |
-| 2 | aligned_shuffled_mtl | 0.203771 | 0.644180 | 0.257044 | 0.097558 | 0.134003 | 12 | 0.218860 |
-| 3 | uci_only | 0.193032 | 0.639986 | 0.252734 | 0.098044 | 0.139407 | 12 | 0.182586 |
-| 3 | aligned_pretrained | 0.194522 | 0.640616 | 0.245711 | 0.097964 | 0.144950 | 8 | 0.185623 |
-| 3 | aligned_mtl | 0.193908 | 0.639218 | 0.249027 | 0.097971 | 0.139610 | 6 | 0.185615 |
-| 3 | aligned_shuffled_mtl | 0.193805 | 0.641886 | 0.249422 | 0.097956 | 0.148549 | 12 | 0.184649 |
-| 4 | uci_only | 0.204631 | 0.645782 | 0.254496 | 0.097508 | 0.126373 | 11 | 0.185278 |
-| 4 | aligned_pretrained | 0.206938 | 0.647636 | 0.256697 | 0.097439 | 0.128072 | 8 | 0.185845 |
-| 4 | aligned_mtl | 0.207054 | 0.647818 | 0.254912 | 0.097432 | 0.127492 | 8 | 0.186006 |
-| 4 | aligned_shuffled_mtl | 0.205666 | 0.647285 | 0.256577 | 0.097461 | 0.131398 | 11 | 0.185541 |
-| 5 | uci_only | 0.193614 | 0.641415 | 0.259468 | 0.097935 | 0.117537 | 12 | 0.195671 |
-| 5 | aligned_pretrained | 0.194336 | 0.641745 | 0.259738 | 0.097897 | 0.111820 | 9 | 0.198088 |
-| 5 | aligned_mtl | 0.192917 | 0.640993 | 0.260159 | 0.097937 | 0.118397 | 8 | 0.198215 |
-| 5 | aligned_shuffled_mtl | 0.193931 | 0.641029 | 0.258234 | 0.097916 | 0.114877 | 12 | 0.196834 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_aligned_results/external_signal_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| aligned_mtl - aligned_shuffled_mtl | 0.001571 | -0.000020 | 0.003104 | 0.972000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_aligned_results/patient_bootstrap.csv)；3 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| aligned_pretrained - clinical | 0.002340 | 0.001234 | 0.003602 | 1.000000 | 200 |
-| aligned_mtl - clinical | 0.002382 | 0.000707 | 0.004139 | 0.995000 | 200 |
-| aligned_shuffled_mtl - clinical | 0.000811 | 0.000249 | 0.001421 | 1.000000 | 200 |
-
-### meps_longitudinal_blend_2008_2016_results
-
-縱向融合延伸至 2008–2016 年的資料量對照。
-
-來源：[原始指標](results/meps_longitudinal_blend_2008_2016_results/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.210137 | 0.004362 | 0.653321 | 0.266820 | 0.097168 | 0.330000 |
-| blend_shuffled_mtl | 0.209495 | 0.004919 | 0.652127 | 0.265684 | 0.097223 | 0.290000 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 | 0.000000 |
-| risk_mtl | 0.205451 | 0.008785 | 0.646798 | 0.260834 | 0.097748 | 1.000000 |
-| risk_shuffled_mtl | 0.207694 | 0.005341 | 0.648863 | 0.263753 | 0.097359 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_blend_2008_2016_results/fold_results.csv)；25 列、13 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | LambdaMEPS | BlendValidationAP | ClinicalValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 232 | 0.000000 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | — | — | — | — | — |
-| 1 | risk_mtl | 292 | 1.000000 | 0.212669 | 0.656830 | 0.269332 | 0.096978 | 12.000000 | 0.189003 | 0.200000 | — | — |
-| 1 | blend_mtl | 292 | 0.600000 | 0.212797 | 0.656935 | 0.272440 | 0.096978 | 12.000000 | 0.189003 | 0.200000 | 0.196775 | 0.195948 |
-| 1 | risk_shuffled_mtl | 206 | 1.000000 | 0.211743 | 0.653628 | 0.262974 | 0.097079 | 12.000000 | 0.188620 | 0.200000 | — | — |
-| 1 | blend_shuffled_mtl | 206 | 0.150000 | 0.212189 | 0.655583 | 0.266637 | 0.097036 | 12.000000 | 0.188620 | 0.200000 | 0.196017 | 0.195948 |
-| 2 | clinical | 122 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | — | — | — | — | — |
-| 2 | risk_mtl | 27 | 1.000000 | 0.204167 | 0.634768 | 0.256005 | 0.097982 | 12.000000 | 0.221016 | 0.200000 | — | — |
-| 2 | blend_mtl | 27 | 0.350000 | 0.209543 | 0.644047 | 0.259599 | 0.097355 | 12.000000 | 0.221016 | 0.200000 | 0.229094 | 0.228711 |
-| 2 | risk_shuffled_mtl | 57 | 1.000000 | 0.207425 | 0.638766 | 0.258507 | 0.097478 | 11.000000 | 0.219013 | 0.200000 | — | — |
-| 2 | blend_shuffled_mtl | 57 | 0.200000 | 0.210191 | 0.644660 | 0.261372 | 0.097239 | 11.000000 | 0.219013 | 0.200000 | 0.228870 | 0.228711 |
-| 3 | clinical | 260 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | — | — | — | — | — |
-| 3 | risk_mtl | 9 | 1.000000 | 0.192324 | 0.634326 | 0.248011 | 0.099394 | 8.000000 | 0.185256 | 0.200000 | — | — |
-| 3 | blend_mtl | 9 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 8.000000 | 0.185256 | 0.200000 | 0.195288 | 0.195288 |
-| 3 | risk_shuffled_mtl | 291 | 1.000000 | 0.207663 | 0.652359 | 0.268610 | 0.097214 | 12.000000 | 0.184787 | 0.200000 | — | — |
-| 3 | blend_shuffled_mtl | 291 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 12.000000 | 0.184787 | 0.200000 | 0.195288 | 0.195288 |
-| 4 | clinical | 219 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | — | — | — | — | — |
-| 4 | risk_mtl | 232 | 1.000000 | 0.214376 | 0.656799 | 0.263317 | 0.096892 | 8.000000 | 0.186085 | 0.200000 | — | — |
-| 4 | blend_mtl | 232 | 0.100000 | 0.215502 | 0.659150 | 0.265806 | 0.096853 | 8.000000 | 0.186085 | 0.200000 | 0.194344 | 0.194265 |
-| 4 | risk_shuffled_mtl | 123 | 1.000000 | 0.212549 | 0.655061 | 0.266252 | 0.097047 | 11.000000 | 0.185510 | 0.200000 | — | — |
-| 4 | blend_shuffled_mtl | 123 | 0.500000 | 0.214606 | 0.657814 | 0.266151 | 0.096925 | 11.000000 | 0.185510 | 0.200000 | 0.194698 | 0.194265 |
-| 5 | clinical | 86 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | — | — | — | — | — |
-| 5 | risk_mtl | 103 | 1.000000 | 0.203720 | 0.651266 | 0.267506 | 0.097494 | 12.000000 | 0.198431 | 0.200000 | — | — |
-| 5 | blend_mtl | 103 | 0.600000 | 0.203940 | 0.651336 | 0.265111 | 0.097506 | 12.000000 | 0.198431 | 0.200000 | 0.204737 | 0.202908 |
-| 5 | risk_shuffled_mtl | 36 | 1.000000 | 0.199088 | 0.644499 | 0.262422 | 0.097978 | 12.000000 | 0.196971 | 0.200000 | — | — |
-| 5 | blend_shuffled_mtl | 36 | 0.600000 | 0.201585 | 0.647443 | 0.263118 | 0.097767 | 12.000000 | 0.196971 | 0.200000 | 0.204039 | 0.202908 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_2008_2016_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - risk_shuffled_mtl | -0.005545 | -0.009039 | -0.002220 | 0.000000 | 1000 |
-| blend_mtl - blend_shuffled_mtl | 0.000615 | -0.000240 | 0.001487 | 0.928000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_2008_2016_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - clinical | -0.008352 | -0.011627 | -0.005297 | 0.000000 | 1000 |
-| blend_mtl - clinical | -0.000023 | -0.000650 | 0.000575 | 0.441000 | 1000 |
-| risk_shuffled_mtl - clinical | -0.002807 | -0.004096 | -0.001534 | 0.000000 | 1000 |
-| blend_shuffled_mtl - clinical | -0.000638 | -0.001207 | -0.000113 | 0.015000 | 1000 |
-
-### meps_longitudinal_blend_2008_2024_results
-
-縱向融合延伸至 2008–2024 年的資料量對照。
-
-來源：[原始指標](results/meps_longitudinal_blend_2008_2024_results/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.210002 | 0.004268 | 0.653402 | 0.266220 | 0.097150 | 0.220000 |
-| blend_shuffled_mtl | 0.209985 | 0.004454 | 0.652837 | 0.267281 | 0.097177 | 0.310000 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 | 0.000000 |
-| risk_mtl | 0.209245 | 0.004363 | 0.651656 | 0.263543 | 0.097190 | 1.000000 |
-| risk_shuffled_mtl | 0.208178 | 0.004184 | 0.649793 | 0.263818 | 0.097291 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_blend_2008_2024_results/fold_results.csv)；25 列、13 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | LambdaMEPS | BlendValidationAP | ClinicalValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 232 | 0.000000 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | — | — | — | — | — |
-| 1 | risk_mtl | 175 | 1.000000 | 0.212861 | 0.656150 | 0.270833 | 0.097013 | 12.000000 | 0.188677 | 0.200000 | — | — |
-| 1 | blend_mtl | 175 | 0.050000 | 0.211765 | 0.655670 | 0.268418 | 0.097042 | 12.000000 | 0.188677 | 0.200000 | 0.195978 | 0.195948 |
-| 1 | risk_shuffled_mtl | 209 | 1.000000 | 0.211086 | 0.654383 | 0.266667 | 0.097084 | 12.000000 | 0.188633 | 0.200000 | — | — |
-| 1 | blend_shuffled_mtl | 209 | 0.550000 | 0.211977 | 0.655535 | 0.268613 | 0.097034 | 12.000000 | 0.188633 | 0.200000 | 0.196935 | 0.195948 |
-| 2 | clinical | 122 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | — | — | — | — | — |
-| 2 | risk_mtl | 72 | 1.000000 | 0.208591 | 0.642862 | 0.257680 | 0.097339 | 11.000000 | 0.220120 | 0.200000 | — | — |
-| 2 | blend_mtl | 72 | 0.250000 | 0.210220 | 0.645547 | 0.260744 | 0.097217 | 11.000000 | 0.220120 | 0.200000 | 0.228782 | 0.228711 |
-| 2 | risk_shuffled_mtl | 61 | 1.000000 | 0.206778 | 0.638167 | 0.251099 | 0.097486 | 12.000000 | 0.218219 | 0.200000 | — | — |
-| 2 | blend_shuffled_mtl | 61 | 0.150000 | 0.210381 | 0.644929 | 0.261988 | 0.097230 | 12.000000 | 0.218219 | 0.200000 | 0.228801 | 0.228711 |
-| 3 | clinical | 260 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | — | — | — | — | — |
-| 3 | risk_mtl | 290 | 1.000000 | 0.207298 | 0.652096 | 0.260615 | 0.097210 | 12.000000 | 0.184854 | 0.200000 | — | — |
-| 3 | blend_mtl | 290 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 12.000000 | 0.184854 | 0.200000 | 0.195288 | 0.195288 |
-| 3 | risk_shuffled_mtl | 265 | 1.000000 | 0.207761 | 0.652747 | 0.271375 | 0.097206 | 12.000000 | 0.184631 | 0.200000 | — | — |
-| 3 | blend_shuffled_mtl | 265 | 0.100000 | 0.208959 | 0.655147 | 0.272239 | 0.097145 | 12.000000 | 0.184631 | 0.200000 | 0.195358 | 0.195288 |
-| 4 | clinical | 219 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | — | — | — | — | — |
-| 4 | risk_mtl | 170 | 1.000000 | 0.214138 | 0.655421 | 0.262060 | 0.096929 | 12.000000 | 0.185754 | 0.200000 | — | — |
-| 4 | blend_mtl | 170 | 0.200000 | 0.215395 | 0.658986 | 0.266456 | 0.096857 | 12.000000 | 0.185754 | 0.200000 | 0.194466 | 0.194265 |
-| 4 | risk_shuffled_mtl | 128 | 1.000000 | 0.213057 | 0.654675 | 0.266446 | 0.097017 | 11.000000 | 0.185856 | 0.200000 | — | — |
-| 4 | blend_shuffled_mtl | 128 | 0.200000 | 0.215356 | 0.658831 | 0.265675 | 0.096872 | 11.000000 | 0.185856 | 0.200000 | 0.194353 | 0.194265 |
-| 5 | clinical | 86 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | — | — | — | — | — |
-| 5 | risk_mtl | 117 | 1.000000 | 0.203337 | 0.651751 | 0.266525 | 0.097461 | 12.000000 | 0.198037 | 0.200000 | — | — |
-| 5 | blend_mtl | 117 | 0.600000 | 0.203723 | 0.651671 | 0.264340 | 0.097484 | 12.000000 | 0.198037 | 0.200000 | 0.204206 | 0.202908 |
-| 5 | risk_shuffled_mtl | 59 | 1.000000 | 0.202210 | 0.648993 | 0.263500 | 0.097664 | 12.000000 | 0.196458 | 0.200000 | — | — |
-| 5 | blend_shuffled_mtl | 59 | 0.550000 | 0.203253 | 0.649743 | 0.267890 | 0.097601 | 12.000000 | 0.196458 | 0.200000 | 0.203774 | 0.202908 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_2008_2024_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - risk_shuffled_mtl | 0.001401 | 0.000091 | 0.002550 | 0.981000 | 1000 |
-| blend_mtl - blend_shuffled_mtl | 0.000228 | -0.000235 | 0.000708 | 0.809000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_2008_2024_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - clinical | -0.000627 | -0.001755 | 0.000447 | 0.125000 | 1000 |
-| blend_mtl - clinical | 0.000180 | -0.000108 | 0.000447 | 0.873000 | 1000 |
-| risk_shuffled_mtl - clinical | -0.002028 | -0.003141 | -0.000889 | 0.001000 | 1000 |
-| blend_shuffled_mtl - clinical | -0.000048 | -0.000540 | 0.000434 | 0.419000 | 1000 |
-
-### meps_longitudinal_blend_ensemble_results
-
-跨 seed 平均縱向 OOF 預測的集成；不可與單 seed 的 AP 均值混排。
-
-來源：[原始指標](results/meps_longitudinal_blend_ensemble_results/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.210191 | 0.005284 | 0.652903 | 0.006093 | 0.097173 | 0.000300 |
-| blend_shuffled_mtl | 0.210061 | 0.005247 | 0.652006 | 0.006510 | 0.097214 | 0.000310 |
-| clinical | 0.210040 | 0.005137 | 0.652528 | 0.006305 | 0.097187 | 0.000290 |
-| risk_mtl | 0.209857 | 0.005237 | 0.651497 | 0.005410 | 0.097197 | 0.000299 |
-| risk_shuffled_mtl | 0.209752 | 0.005360 | 0.650901 | 0.006662 | 0.097252 | 0.000341 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_blend_ensemble_results/fold_results.csv)；25 列、5 欄。
-
-| Fold | Experiment | AP | AUROC | Brier |
-| --- | --- | --- | --- | --- |
-| 1 | clinical | 0.213349 | 0.656520 | 0.096979 |
-| 1 | risk_mtl | 0.214443 | 0.655589 | 0.096963 |
-| 1 | blend_mtl | 0.213829 | 0.656828 | 0.096957 |
-| 1 | risk_shuffled_mtl | 0.213026 | 0.655589 | 0.097007 |
-| 1 | blend_shuffled_mtl | 0.213398 | 0.655972 | 0.096990 |
-| 2 | clinical | 0.208346 | 0.642704 | 0.097372 |
-| 2 | risk_mtl | 0.208147 | 0.643433 | 0.097360 |
-| 2 | blend_mtl | 0.208385 | 0.643596 | 0.097348 |
-| 2 | risk_shuffled_mtl | 0.207248 | 0.640581 | 0.097583 |
-| 2 | blend_shuffled_mtl | 0.208022 | 0.641741 | 0.097480 |
-| 3 | clinical | 0.208499 | 0.654182 | 0.097190 |
-| 3 | risk_mtl | 0.208409 | 0.652328 | 0.097193 |
-| 3 | blend_mtl | 0.208601 | 0.654235 | 0.097187 |
-| 3 | risk_shuffled_mtl | 0.209548 | 0.652213 | 0.097155 |
-| 3 | blend_shuffled_mtl | 0.208775 | 0.653935 | 0.097184 |
-| 4 | clinical | 0.216686 | 0.658807 | 0.096836 |
-| 4 | risk_mtl | 0.215571 | 0.656920 | 0.096865 |
-| 4 | blend_mtl | 0.216874 | 0.659199 | 0.096812 |
-| 4 | risk_shuffled_mtl | 0.216459 | 0.657419 | 0.096879 |
-| 4 | blend_shuffled_mtl | 0.216880 | 0.658384 | 0.096845 |
-| 5 | clinical | 0.203318 | 0.650429 | 0.097555 |
-| 5 | risk_mtl | 0.202717 | 0.649214 | 0.097603 |
-| 5 | blend_mtl | 0.203263 | 0.650655 | 0.097563 |
-| 5 | risk_shuffled_mtl | 0.202479 | 0.648702 | 0.097635 |
-| 5 | blend_shuffled_mtl | 0.203229 | 0.649999 | 0.097571 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_ensemble_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - risk_shuffled_mtl | 0.000304 | -0.000600 | 0.001218 | 0.751000 | 1000 |
-| blend_mtl - blend_shuffled_mtl | 0.000352 | -0.000085 | 0.000781 | 0.948000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_ensemble_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - clinical | -0.000157 | -0.001027 | 0.000777 | 0.361000 | 1000 |
-| blend_mtl - clinical | 0.000187 | -0.000059 | 0.000446 | 0.919000 | 1000 |
-| risk_shuffled_mtl - clinical | -0.000461 | -0.001355 | 0.000350 | 0.135000 | 1000 |
-| blend_shuffled_mtl - clinical | -0.000165 | -0.000598 | 0.000220 | 0.205000 | 1000 |
-
-### meps_longitudinal_blend_results
-
-2008–2012 年 MEPS 真實／shuffled 縱向 MTL 與 XGBoost 融合主實驗。
-
-來源：[原始指標](results/meps_longitudinal_blend_results/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.210155 | 0.004912 | 0.653002 | 0.266957 | 0.097154 | 0.300000 |
-| blend_shuffled_mtl | 0.209519 | 0.004801 | 0.651896 | 0.264986 | 0.097278 | 0.330000 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 | 0.000000 |
-| risk_mtl | 0.209609 | 0.005484 | 0.650839 | 0.263431 | 0.097209 | 1.000000 |
-| risk_shuffled_mtl | 0.206810 | 0.006828 | 0.647995 | 0.263013 | 0.097502 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_blend_results/fold_results.csv)；25 列、11 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | BlendValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 232 | 0.000000 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | — | — | — |
-| 1 | risk_mtl | 174 | 1.000000 | 0.214267 | 0.653723 | 0.270283 | 0.097001 | 12.000000 | 0.189068 | — |
-| 1 | blend_mtl | 174 | 0.350000 | 0.213014 | 0.655613 | 0.269640 | 0.097000 | 12.000000 | 0.189068 | 0.196442 |
-| 1 | risk_shuffled_mtl | 300 | 1.000000 | 0.211540 | 0.655023 | 0.268168 | 0.097047 | 12.000000 | 0.188856 | — |
-| 1 | blend_shuffled_mtl | 300 | 0.550000 | 0.212178 | 0.655714 | 0.267758 | 0.097020 | 12.000000 | 0.188856 | 0.196286 |
-| 2 | clinical | 122 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | — | — | — |
-| 2 | risk_mtl | 73 | 1.000000 | 0.209133 | 0.643559 | 0.258951 | 0.097314 | 11.000000 | 0.219805 | — |
-| 2 | blend_mtl | 73 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 11.000000 | 0.219805 | 0.228711 |
-| 2 | risk_shuffled_mtl | 17 | 1.000000 | 0.199800 | 0.630365 | 0.251475 | 0.098581 | 12.000000 | 0.218860 | — |
-| 2 | blend_shuffled_mtl | 17 | 0.600000 | 0.207438 | 0.640907 | 0.257640 | 0.097797 | 12.000000 | 0.218860 | 0.230111 |
-| 3 | clinical | 260 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | — | — | — |
-| 3 | risk_mtl | 138 | 1.000000 | 0.207692 | 0.650451 | 0.261550 | 0.097245 | 6.000000 | 0.185615 | — |
-| 3 | blend_mtl | 138 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 6.000000 | 0.185615 | 0.195288 |
-| 3 | risk_shuffled_mtl | 206 | 1.000000 | 0.207476 | 0.651496 | 0.269024 | 0.097231 | 12.000000 | 0.184649 | — |
-| 3 | blend_shuffled_mtl | 206 | 0.050000 | 0.208860 | 0.655054 | 0.271319 | 0.097148 | 12.000000 | 0.184649 | 0.195293 |
-| 4 | clinical | 219 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | — | — | — |
-| 4 | risk_mtl | 279 | 1.000000 | 0.215264 | 0.658765 | 0.265163 | 0.096811 | 8.000000 | 0.186006 | — |
-| 4 | blend_mtl | 279 | 0.600000 | 0.215739 | 0.659692 | 0.266419 | 0.096803 | 8.000000 | 0.186006 | 0.194450 |
-| 4 | risk_shuffled_mtl | 125 | 1.000000 | 0.215142 | 0.656019 | 0.266579 | 0.096921 | 11.000000 | 0.185541 | — |
-| 4 | blend_shuffled_mtl | 125 | 0.450000 | 0.215898 | 0.658525 | 0.265794 | 0.096856 | 11.000000 | 0.185541 | 0.194536 |
-| 5 | clinical | 86 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | — | — | — |
-| 5 | risk_mtl | 66 | 1.000000 | 0.201690 | 0.647696 | 0.261209 | 0.097673 | 8.000000 | 0.198215 | — |
-| 5 | blend_mtl | 66 | 0.550000 | 0.202703 | 0.649105 | 0.263011 | 0.097612 | 8.000000 | 0.198215 | 0.203072 |
-| 5 | risk_shuffled_mtl | 58 | 1.000000 | 0.200094 | 0.647072 | 0.259818 | 0.097729 | 12.000000 | 0.196834 | — |
-| 5 | blend_shuffled_mtl | 58 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 12.000000 | 0.196834 | 0.202908 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - risk_shuffled_mtl | 0.004273 | 0.002359 | 0.006126 | 1.000000 | 1000 |
-| blend_mtl - blend_shuffled_mtl | 0.001443 | 0.000334 | 0.002628 | 0.996000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_blend_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - clinical | -0.000478 | -0.001624 | 0.000981 | 0.261000 | 1000 |
-| blend_mtl - clinical | 0.000275 | -0.000284 | 0.000896 | 0.825000 | 1000 |
-| risk_shuffled_mtl - clinical | -0.004751 | -0.007121 | -0.002817 | 0.000000 | 1000 |
-| blend_shuffled_mtl - clinical | -0.001169 | -0.002337 | -0.000136 | 0.016000 | 1000 |
-
-### meps_longitudinal_blend_seed2024
-
-2008–2012 年縱向融合在 seed 2024 的穩健性重跑。
-
-來源：[原始指標](results/meps_longitudinal_blend_seed2024/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.210013 | 0.005281 | 0.652869 | 0.265503 | 0.097177 | 0.230000 |
-| blend_shuffled_mtl | 0.209848 | 0.005259 | 0.651703 | 0.264476 | 0.097211 | 0.470000 |
-| clinical | 0.209891 | 0.005312 | 0.652392 | 0.264810 | 0.097189 | 0.000000 |
-| risk_mtl | 0.209046 | 0.005087 | 0.650944 | 0.266234 | 0.097221 | 1.000000 |
-| risk_shuffled_mtl | 0.209312 | 0.004935 | 0.650094 | 0.265170 | 0.097248 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_blend_seed2024/fold_results.csv)；25 列、13 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | LambdaMEPS | BlendValidationAP | ClinicalValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 298 | 0.000000 | 0.213633 | 0.657247 | 0.268978 | 0.096947 | — | — | — | — | — |
-| 1 | risk_mtl | 273 | 1.000000 | 0.212939 | 0.657057 | 0.271340 | 0.096971 | 12.000000 | 0.187915 | 0.200000 | — | — |
-| 1 | blend_mtl | 273 | 0.350000 | 0.213936 | 0.658006 | 0.269523 | 0.096925 | 12.000000 | 0.187915 | 0.200000 | 0.195489 | 0.195296 |
-| 1 | risk_shuffled_mtl | 140 | 1.000000 | 0.210324 | 0.652478 | 0.269942 | 0.097171 | 12.000000 | 0.185154 | 0.200000 | — | — |
-| 1 | blend_shuffled_mtl | 140 | 0.550000 | 0.213185 | 0.655462 | 0.270293 | 0.097019 | 12.000000 | 0.185154 | 0.200000 | 0.197013 | 0.195296 |
-| 2 | clinical | 81 | 0.000000 | 0.207619 | 0.643146 | 0.258999 | 0.097356 | — | — | — | — | — |
-| 2 | risk_mtl | 81 | 1.000000 | 0.207585 | 0.643890 | 0.261427 | 0.097346 | 12.000000 | 0.218238 | 0.200000 | — | — |
-| 2 | blend_mtl | 81 | 0.350000 | 0.207974 | 0.644252 | 0.257130 | 0.097334 | 12.000000 | 0.218238 | 0.200000 | 0.228042 | 0.227772 |
-| 2 | risk_shuffled_mtl | 83 | 1.000000 | 0.207947 | 0.642137 | 0.259918 | 0.097353 | 12.000000 | 0.217609 | 0.200000 | — | — |
-| 2 | blend_shuffled_mtl | 83 | 0.600000 | 0.208110 | 0.642811 | 0.256891 | 0.097339 | 12.000000 | 0.217609 | 0.200000 | 0.230360 | 0.227772 |
-| 3 | clinical | 185 | 0.000000 | 0.207678 | 0.653360 | 0.265959 | 0.097240 | — | — | — | — | — |
-| 3 | risk_mtl | 185 | 1.000000 | 0.207770 | 0.651269 | 0.265985 | 0.097217 | 12.000000 | 0.185391 | 0.200000 | — | — |
-| 3 | blend_mtl | 185 | 0.100000 | 0.207849 | 0.653498 | 0.267881 | 0.097227 | 12.000000 | 0.185391 | 0.200000 | 0.193616 | 0.193604 |
-| 3 | risk_shuffled_mtl | 185 | 1.000000 | 0.210477 | 0.651513 | 0.266400 | 0.097112 | 12.000000 | 0.184953 | 0.200000 | — | — |
-| 3 | blend_shuffled_mtl | 185 | 0.050000 | 0.207846 | 0.653334 | 0.265890 | 0.097229 | 12.000000 | 0.184953 | 0.200000 | 0.193633 | 0.193604 |
-| 4 | clinical | 142 | 0.000000 | 0.216917 | 0.657110 | 0.264649 | 0.096884 | — | — | — | — | — |
-| 4 | risk_mtl | 159 | 1.000000 | 0.214945 | 0.654607 | 0.263557 | 0.096945 | 8.000000 | 0.186896 | 0.200000 | — | — |
-| 4 | blend_mtl | 159 | 0.250000 | 0.216759 | 0.657281 | 0.265338 | 0.096879 | 8.000000 | 0.186896 | 0.200000 | 0.194505 | 0.193908 |
-| 4 | risk_shuffled_mtl | 137 | 1.000000 | 0.215720 | 0.656209 | 0.263400 | 0.096954 | 10.000000 | 0.187795 | 0.200000 | — | — |
-| 4 | blend_shuffled_mtl | 137 | 0.550000 | 0.216847 | 0.656961 | 0.263405 | 0.096897 | 10.000000 | 0.187795 | 0.200000 | 0.195073 | 0.193908 |
-| 5 | clinical | 111 | 0.000000 | 0.203609 | 0.651096 | 0.265465 | 0.097520 | — | — | — | — | — |
-| 5 | risk_mtl | 71 | 1.000000 | 0.201989 | 0.647899 | 0.268860 | 0.097627 | 12.000000 | 0.193829 | 0.200000 | — | — |
-| 5 | blend_mtl | 71 | 0.100000 | 0.203548 | 0.651305 | 0.267644 | 0.097519 | 12.000000 | 0.193829 | 0.200000 | 0.204016 | 0.203944 |
-| 5 | risk_shuffled_mtl | 71 | 1.000000 | 0.202092 | 0.648131 | 0.266192 | 0.097651 | 12.000000 | 0.193347 | 0.200000 | — | — |
-| 5 | blend_shuffled_mtl | 71 | 0.600000 | 0.203253 | 0.649947 | 0.265897 | 0.097570 | 12.000000 | 0.193347 | 0.200000 | 0.205693 | 0.203944 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-[來源檔](results/meps_longitudinal_blend_seed2024/external_signal_bootstrap.csv)為空檔，**沒有可報告的數值**。
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-[來源檔](results/meps_longitudinal_blend_seed2024/patient_bootstrap.csv)為空檔，**沒有可報告的數值**。
-
-### meps_longitudinal_blend_seed3407
-
-2008–2012 年縱向融合在 seed 3407 的穩健性重跑。
-
-來源：[原始指標](results/meps_longitudinal_blend_seed3407/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.209302 | 0.005751 | 0.651178 | 0.264339 | 0.097253 | 0.090000 |
-| blend_shuffled_mtl | 0.209539 | 0.005508 | 0.651316 | 0.265872 | 0.097225 | 0.330000 |
-| clinical | 0.209068 | 0.006012 | 0.650641 | 0.264450 | 0.097268 | 0.000000 |
-| risk_mtl | 0.208859 | 0.004886 | 0.649754 | 0.263564 | 0.097262 | 1.000000 |
-| risk_shuffled_mtl | 0.209343 | 0.004958 | 0.651117 | 0.265720 | 0.097218 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_blend_seed3407/fold_results.csv)；25 列、13 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | LambdaMEPS | BlendValidationAP | ClinicalValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 248 | 0.000000 | 0.213086 | 0.655732 | 0.271898 | 0.096998 | — | — | — | — | — |
-| 1 | risk_mtl | 120 | 1.000000 | 0.212908 | 0.652511 | 0.267191 | 0.097070 | 12.000000 | 0.186385 | 0.200000 | — | — |
-| 1 | blend_mtl | 120 | 0.000000 | 0.213086 | 0.655732 | 0.271898 | 0.096998 | 12.000000 | 0.186385 | 0.200000 | 0.197997 | 0.197997 |
-| 1 | risk_shuffled_mtl | 292 | 1.000000 | 0.212974 | 0.656231 | 0.268782 | 0.096995 | 12.000000 | 0.186687 | 0.200000 | — | — |
-| 1 | blend_shuffled_mtl | 292 | 0.000000 | 0.213086 | 0.655732 | 0.271898 | 0.096998 | 12.000000 | 0.186687 | 0.200000 | 0.197997 | 0.197997 |
-| 2 | clinical | 44 | 0.000000 | 0.205056 | 0.636279 | 0.256032 | 0.097674 | — | — | — | — | — |
-| 2 | risk_mtl | 52 | 1.000000 | 0.206398 | 0.640518 | 0.256111 | 0.097494 | 12.000000 | 0.221175 | 0.200000 | — | — |
-| 2 | blend_mtl | 52 | 0.250000 | 0.205833 | 0.638386 | 0.254893 | 0.097612 | 12.000000 | 0.221175 | 0.200000 | 0.228404 | 0.227350 |
-| 2 | risk_shuffled_mtl | 76 | 1.000000 | 0.208352 | 0.641798 | 0.259843 | 0.097353 | 12.000000 | 0.219312 | 0.200000 | — | — |
-| 2 | blend_shuffled_mtl | 76 | 0.600000 | 0.207658 | 0.640489 | 0.257876 | 0.097454 | 12.000000 | 0.219312 | 0.200000 | 0.229138 | 0.227350 |
-| 3 | clinical | 154 | 0.000000 | 0.208140 | 0.652631 | 0.265366 | 0.097240 | — | — | — | — | — |
-| 3 | risk_mtl | 153 | 1.000000 | 0.208025 | 0.652693 | 0.267693 | 0.097209 | 12.000000 | 0.185485 | 0.200000 | — | — |
-| 3 | blend_mtl | 153 | 0.000000 | 0.208140 | 0.652631 | 0.265366 | 0.097240 | 12.000000 | 0.185485 | 0.200000 | 0.192447 | 0.192447 |
-| 3 | risk_shuffled_mtl | 153 | 1.000000 | 0.208021 | 0.651428 | 0.267173 | 0.097241 | 12.000000 | 0.184682 | 0.200000 | — | — |
-| 3 | blend_shuffled_mtl | 153 | 0.600000 | 0.208390 | 0.652116 | 0.267877 | 0.097231 | 12.000000 | 0.184682 | 0.200000 | 0.193205 | 0.192447 |
-| 4 | clinical | 187 | 0.000000 | 0.216979 | 0.659000 | 0.263110 | 0.096814 | — | — | — | — | — |
-| 4 | risk_mtl | 173 | 1.000000 | 0.214485 | 0.654138 | 0.262099 | 0.096955 | 10.000000 | 0.189742 | 0.200000 | — | — |
-| 4 | blend_mtl | 173 | 0.050000 | 0.216944 | 0.658962 | 0.263020 | 0.096816 | 10.000000 | 0.189742 | 0.200000 | 0.194769 | 0.194702 |
-| 4 | risk_shuffled_mtl | 183 | 1.000000 | 0.215067 | 0.657442 | 0.264941 | 0.096883 | 11.000000 | 0.189402 | 0.200000 | — | — |
-| 4 | blend_shuffled_mtl | 183 | 0.450000 | 0.216485 | 0.658676 | 0.265866 | 0.096830 | 11.000000 | 0.189402 | 0.200000 | 0.194923 | 0.194702 |
-| 5 | clinical | 76 | 0.000000 | 0.202077 | 0.649565 | 0.265844 | 0.097614 | — | — | — | — | — |
-| 5 | risk_mtl | 77 | 1.000000 | 0.202481 | 0.648913 | 0.264725 | 0.097581 | 12.000000 | 0.196447 | 0.200000 | — | — |
-| 5 | blend_mtl | 77 | 0.150000 | 0.202507 | 0.650177 | 0.266515 | 0.097597 | 12.000000 | 0.196447 | 0.200000 | 0.205014 | 0.204795 |
-| 5 | risk_shuffled_mtl | 88 | 1.000000 | 0.202298 | 0.648687 | 0.267860 | 0.097616 | 12.000000 | 0.196462 | 0.200000 | — | — |
-| 5 | blend_shuffled_mtl | 88 | 0.000000 | 0.202077 | 0.649565 | 0.265844 | 0.097614 | 12.000000 | 0.196462 | 0.200000 | 0.204795 | 0.204795 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-[來源檔](results/meps_longitudinal_blend_seed3407/external_signal_bootstrap.csv)為空檔，**沒有可報告的數值**。
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-[來源檔](results/meps_longitudinal_blend_seed3407/patient_bootstrap.csv)為空檔，**沒有可報告的數值**。
-
-### meps_longitudinal_results
-
-較早年度縱向 MLP 直接共享、預訓練與多任務版本。
-
-來源：[原始指標](results/meps_longitudinal_results/summary.csv)；5 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| direct_shared | 0.201459 | 0.007143 | 0.643621 | 0.003018 | 0.257186 | 0.002766 | 0.097655 | 0.000285 |
-| longitudinal_mtl | 0.201473 | 0.006880 | 0.643687 | 0.002725 | 0.256427 | 0.003517 | 0.097655 | 0.000272 |
-| pretrained | 0.201408 | 0.006866 | 0.643759 | 0.002900 | 0.256774 | 0.002990 | 0.097647 | 0.000282 |
-| shuffled_mtl | 0.201383 | 0.006681 | 0.643849 | 0.002595 | 0.258267 | 0.004089 | 0.097650 | 0.000265 |
-| uci_only | 0.200808 | 0.007165 | 0.643094 | 0.002347 | 0.257244 | 0.003409 | 0.097686 | 0.000289 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_results/fold_results.csv)；25 列、9 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Epochs | InnerValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | uci_only | 0.209248 | 0.644386 | 0.259065 | 0.097370 | 0.124988 | 12 | 0.187986 |
-| 1 | direct_shared | 0.209103 | 0.644889 | 0.257573 | 0.097380 | 0.117040 | 10 | 0.187718 |
-| 1 | pretrained | 0.208343 | 0.644757 | 0.259950 | 0.097380 | 0.116849 | 12 | 0.187323 |
-| 1 | longitudinal_mtl | 0.209400 | 0.644419 | 0.259740 | 0.097385 | 0.129091 | 10 | 0.187931 |
-| 1 | shuffled_mtl | 0.208318 | 0.645024 | 0.263316 | 0.097377 | 0.129648 | 12 | 0.187713 |
-| 2 | uci_only | 0.203512 | 0.643901 | 0.260460 | 0.097574 | 0.136340 | 12 | 0.217077 |
-| 2 | direct_shared | 0.203907 | 0.643900 | 0.260057 | 0.097560 | 0.134898 | 12 | 0.218649 |
-| 2 | pretrained | 0.204279 | 0.644578 | 0.257409 | 0.097534 | 0.132636 | 12 | 0.218501 |
-| 2 | longitudinal_mtl | 0.203933 | 0.644249 | 0.257080 | 0.097555 | 0.115263 | 12 | 0.217669 |
-| 2 | shuffled_mtl | 0.204078 | 0.644342 | 0.259177 | 0.097549 | 0.133859 | 12 | 0.218333 |
-| 3 | uci_only | 0.193032 | 0.639986 | 0.252734 | 0.098044 | 0.139407 | 12 | 0.182586 |
-| 3 | direct_shared | 0.193935 | 0.640669 | 0.252583 | 0.097997 | 0.142147 | 12 | 0.184131 |
-| 3 | pretrained | 0.194044 | 0.641416 | 0.252138 | 0.097973 | 0.140763 | 12 | 0.184541 |
-| 3 | longitudinal_mtl | 0.194513 | 0.641702 | 0.250633 | 0.097964 | 0.140305 | 12 | 0.184255 |
-| 3 | shuffled_mtl | 0.194675 | 0.641473 | 0.252051 | 0.097941 | 0.138431 | 12 | 0.184512 |
-| 4 | uci_only | 0.204631 | 0.645782 | 0.254496 | 0.097508 | 0.126373 | 11 | 0.185278 |
-| 4 | direct_shared | 0.206491 | 0.647861 | 0.258094 | 0.097422 | 0.120915 | 11 | 0.186257 |
-| 4 | pretrained | 0.206312 | 0.647650 | 0.255877 | 0.097422 | 0.131726 | 12 | 0.185407 |
-| 4 | longitudinal_mtl | 0.205510 | 0.647545 | 0.256154 | 0.097447 | 0.131544 | 11 | 0.185534 |
-| 4 | shuffled_mtl | 0.206000 | 0.647319 | 0.257421 | 0.097461 | 0.120303 | 11 | 0.185518 |
-| 5 | uci_only | 0.193614 | 0.641415 | 0.259468 | 0.097935 | 0.117537 | 12 | 0.195671 |
-| 5 | direct_shared | 0.193859 | 0.640785 | 0.257624 | 0.097916 | 0.115180 | 12 | 0.197303 |
-| 5 | pretrained | 0.194061 | 0.640391 | 0.258495 | 0.097926 | 0.114497 | 12 | 0.197872 |
-| 5 | longitudinal_mtl | 0.194010 | 0.640519 | 0.258527 | 0.097926 | 0.114311 | 12 | 0.197696 |
-| 5 | shuffled_mtl | 0.193842 | 0.641087 | 0.259372 | 0.097925 | 0.117968 | 12 | 0.196904 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_results/external_signal_bootstrap.csv)；1 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| longitudinal_mtl - shuffled_mtl | -0.000263 | -0.000962 | 0.000351 | 0.177000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| direct_shared - clinical | 0.001070 | 0.000485 | 0.001727 | 1.000000 | 200 |
-| pretrained - clinical | 0.000987 | 0.000397 | 0.001667 | 1.000000 | 200 |
-| longitudinal_mtl - clinical | 0.000858 | 0.000318 | 0.001424 | 1.000000 | 200 |
-| shuffled_mtl - clinical | 0.001120 | 0.000483 | 0.001838 | 1.000000 | 200 |
-
-### meps_longitudinal_risk_xgb_results
-
-僅取 MEPS 縱向風險分數接入 XGBoost 的控制。
-
-來源：[原始指標](results/meps_longitudinal_risk_xgb_results/summary.csv)；5 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.005430 | 0.266374 | 0.003348 | 0.097167 | 0.000261 |
-| risk_mtl | 0.209375 | 0.004905 | 0.650451 | 0.005640 | 0.262619 | 0.003808 | 0.097228 | 0.000279 |
-| risk_pretrained | 0.208722 | 0.005212 | 0.649887 | 0.006514 | 0.262985 | 0.004442 | 0.097281 | 0.000315 |
-| risk_shuffled | 0.209443 | 0.004699 | 0.650575 | 0.004536 | 0.264376 | 0.002142 | 0.097235 | 0.000267 |
-| risk_shuffled_mtl | 0.207466 | 0.005668 | 0.648459 | 0.006964 | 0.261733 | 0.008345 | 0.097329 | 0.000325 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_risk_xgb_results/fold_results.csv)；25 列、8 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Trees |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 0.211610 | 0.655509 | 0.268027 | 0.097049 | 0.121627 | 232 |
-| 1 | risk_pretrained | 0.211043 | 0.651371 | 0.264942 | 0.097161 | 0.121112 | 124 |
-| 1 | risk_shuffled | 0.212160 | 0.652471 | 0.264061 | 0.097085 | 0.117261 | 162 |
-| 1 | risk_mtl | 0.213192 | 0.652043 | 0.267311 | 0.097101 | 0.119147 | 124 |
-| 1 | risk_shuffled_mtl | 0.209634 | 0.650287 | 0.264939 | 0.097228 | 0.116180 | 124 |
-| 2 | clinical | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.125534 | 122 |
-| 2 | risk_pretrained | 0.206898 | 0.640366 | 0.255319 | 0.097467 | 0.136069 | 59 |
-| 2 | risk_shuffled | 0.209175 | 0.644535 | 0.261367 | 0.097272 | 0.136498 | 106 |
-| 2 | risk_mtl | 0.208231 | 0.641804 | 0.256715 | 0.097400 | 0.137814 | 61 |
-| 2 | risk_shuffled_mtl | 0.205212 | 0.637810 | 0.246842 | 0.097544 | 0.139138 | 55 |
-| 3 | clinical | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 0.133370 | 260 |
-| 3 | risk_pretrained | 0.208135 | 0.652021 | 0.263094 | 0.097239 | 0.137809 | 139 |
-| 3 | risk_shuffled | 0.209057 | 0.653719 | 0.266555 | 0.097179 | 0.132531 | 211 |
-| 3 | risk_mtl | 0.208342 | 0.651763 | 0.263437 | 0.097191 | 0.135040 | 164 |
-| 3 | risk_shuffled_mtl | 0.207069 | 0.650290 | 0.265538 | 0.097272 | 0.131812 | 150 |
-| 4 | clinical | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 0.129450 | 219 |
-| 4 | risk_pretrained | 0.215824 | 0.658077 | 0.266340 | 0.096852 | 0.128447 | 183 |
-| 4 | risk_shuffled | 0.214681 | 0.655065 | 0.263570 | 0.096969 | 0.121250 | 126 |
-| 4 | risk_mtl | 0.214796 | 0.657305 | 0.263245 | 0.096861 | 0.128792 | 224 |
-| 4 | risk_shuffled_mtl | 0.215404 | 0.656926 | 0.264966 | 0.096874 | 0.127101 | 151 |
-| 5 | clinical | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 0.113508 | 86 |
-| 5 | risk_pretrained | 0.201710 | 0.647597 | 0.265231 | 0.097685 | 0.116785 | 59 |
-| 5 | risk_shuffled | 0.202143 | 0.647086 | 0.266328 | 0.097669 | 0.128777 | 64 |
-| 5 | risk_mtl | 0.202312 | 0.649342 | 0.262388 | 0.097588 | 0.111306 | 86 |
-| 5 | risk_shuffled_mtl | 0.200012 | 0.646981 | 0.266382 | 0.097725 | 0.124587 | 59 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_risk_xgb_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_pretrained - risk_shuffled | -0.000689 | -0.001650 | 0.000359 | 0.089000 | 1000 |
-| risk_mtl - risk_shuffled_mtl | 0.001721 | 0.000464 | 0.002959 | 0.998000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_risk_xgb_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_pretrained - clinical | -0.001229 | -0.002264 | -0.000081 | 0.023000 | 1000 |
-| risk_shuffled - clinical | -0.000540 | -0.001329 | 0.000372 | 0.122000 | 1000 |
-| risk_mtl - clinical | -0.000681 | -0.001982 | 0.000705 | 0.155000 | 1000 |
-| risk_shuffled_mtl - clinical | -0.002402 | -0.003598 | -0.001178 | 0.000000 | 1000 |
-
-### meps_longitudinal_tuned_blend_results
-
-限制融合權重並在驗證側選取的縱向實驗。
-
-來源：[原始指標](results/meps_longitudinal_tuned_blend_results/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_mtl | 0.209894 | 0.004498 | 0.653195 | 0.266622 | 0.097156 | 0.120000 |
-| blend_shuffled_mtl | 0.209557 | 0.004744 | 0.651815 | 0.265237 | 0.097280 | 0.240000 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 | 0.000000 |
-| risk_mtl | 0.209539 | 0.005505 | 0.651656 | 0.265881 | 0.097175 | 1.000000 |
-| risk_shuffled_mtl | 0.207254 | 0.006895 | 0.648163 | 0.262099 | 0.097487 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_tuned_blend_results/fold_results.csv)；25 列、13 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | LambdaMEPS | BlendValidationAP | ClinicalValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 232 | 0.000000 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | — | — | — | — | — |
-| 1 | risk_mtl | 174 | 1.000000 | 0.214267 | 0.653723 | 0.270283 | 0.097001 | 12.000000 | 0.189068 | 0.200000 | — | — |
-| 1 | blend_mtl | 174 | 0.000000 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | 12.000000 | 0.189068 | 0.200000 | 0.196442 | 0.195948 |
-| 1 | risk_shuffled_mtl | 174 | 1.000000 | 0.212646 | 0.653409 | 0.268011 | 0.097045 | 12.000000 | 0.188887 | 0.100000 | — | — |
-| 1 | blend_shuffled_mtl | 174 | 0.600000 | 0.212789 | 0.654705 | 0.269268 | 0.097023 | 12.000000 | 0.188887 | 0.100000 | 0.197343 | 0.195948 |
-| 2 | clinical | 122 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | — | — | — | — | — |
-| 2 | risk_mtl | 76 | 1.000000 | 0.208843 | 0.643801 | 0.259458 | 0.097300 | 11.000000 | 0.220034 | 0.050000 | — | — |
-| 2 | blend_mtl | 76 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 11.000000 | 0.220034 | 0.050000 | 0.228942 | 0.228711 |
-| 2 | risk_shuffled_mtl | 17 | 1.000000 | 0.199800 | 0.630365 | 0.251475 | 0.098581 | 12.000000 | 0.218860 | 0.200000 | — | — |
-| 2 | blend_shuffled_mtl | 17 | 0.600000 | 0.207438 | 0.640907 | 0.257640 | 0.097797 | 12.000000 | 0.218860 | 0.200000 | 0.230111 | 0.228711 |
-| 3 | clinical | 260 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | — | — | — | — | — |
-| 3 | risk_mtl | 139 | 1.000000 | 0.206653 | 0.650853 | 0.264140 | 0.097267 | 8.000000 | 0.185665 | 0.050000 | — | — |
-| 3 | blend_mtl | 139 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 8.000000 | 0.185665 | 0.050000 | 0.195288 | 0.195288 |
-| 3 | risk_shuffled_mtl | 205 | 1.000000 | 0.208869 | 0.652705 | 0.267979 | 0.097169 | 12.000000 | 0.184650 | 0.100000 | — | — |
-| 3 | blend_shuffled_mtl | 205 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 12.000000 | 0.184650 | 0.100000 | 0.195402 | 0.195288 |
-| 4 | clinical | 219 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | — | — | — | — | — |
-| 4 | risk_mtl | 294 | 1.000000 | 0.215652 | 0.659408 | 0.267886 | 0.096787 | 8.000000 | 0.186194 | 0.100000 | — | — |
-| 4 | blend_mtl | 294 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 8.000000 | 0.186194 | 0.100000 | 0.194629 | 0.194265 |
-| 4 | risk_shuffled_mtl | 151 | 1.000000 | 0.214645 | 0.657241 | 0.267012 | 0.096900 | 11.000000 | 0.185570 | 0.050000 | — | — |
-| 4 | blend_shuffled_mtl | 151 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 11.000000 | 0.185570 | 0.050000 | 0.194599 | 0.194265 |
-| 5 | clinical | 86 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | — | — | — | — | — |
-| 5 | risk_mtl | 124 | 1.000000 | 0.202280 | 0.650493 | 0.267638 | 0.097518 | 9.000000 | 0.198288 | 0.100000 | — | — |
-| 5 | blend_mtl | 124 | 0.600000 | 0.203107 | 0.650816 | 0.263660 | 0.097517 | 9.000000 | 0.198288 | 0.100000 | 0.203792 | 0.202908 |
-| 5 | risk_shuffled_mtl | 57 | 1.000000 | 0.200307 | 0.647096 | 0.256020 | 0.097739 | 12.000000 | 0.196948 | 0.050000 | — | — |
-| 5 | blend_shuffled_mtl | 57 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 12.000000 | 0.196948 | 0.050000 | 0.202978 | 0.202908 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_tuned_blend_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - risk_shuffled_mtl | 0.004087 | 0.002174 | 0.005959 | 1.000000 | 1000 |
-| blend_mtl - blend_shuffled_mtl | 0.001178 | 0.000109 | 0.002284 | 0.986000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_tuned_blend_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_mtl - clinical | -0.000102 | -0.001400 | 0.001305 | 0.440000 | 1000 |
-| blend_mtl - clinical | 0.000014 | -0.000233 | 0.000259 | 0.546000 | 1000 |
-| risk_shuffled_mtl - clinical | -0.004188 | -0.006352 | -0.002351 | 0.000000 | 1000 |
-| blend_shuffled_mtl - clinical | -0.001164 | -0.002237 | -0.000179 | 0.007000 | 1000 |
-
-### meps_longitudinal_xgb_results
-
-縱向外部風險與 embedding 和 XGBoost 特徵的多種組合。
-
-來源：[原始指標](results/meps_longitudinal_xgb_results/summary.csv)；6 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| aligned_mtl | 0.209080 | 0.004209 | 0.652012 | 0.004696 | 0.265675 | 0.003230 | 0.097183 | 0.000288 |
-| aligned_pretrained | 0.208722 | 0.004114 | 0.652186 | 0.004180 | 0.267684 | 0.002864 | 0.097182 | 0.000223 |
-| aligned_shuffled | 0.207800 | 0.004711 | 0.649506 | 0.007257 | 0.264202 | 0.004352 | 0.097308 | 0.000311 |
-| aligned_shuffled_mtl | 0.207357 | 0.005680 | 0.648704 | 0.007414 | 0.263704 | 0.005101 | 0.097348 | 0.000386 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.005430 | 0.266374 | 0.003348 | 0.097167 | 0.000261 |
-| random | 0.209416 | 0.004356 | 0.650661 | 0.005116 | 0.263140 | 0.003704 | 0.097225 | 0.000219 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_longitudinal_xgb_results/fold_results.csv)；30 列、8 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Trees |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 0.211610 | 0.655509 | 0.268027 | 0.097049 | 0.121627 | 232 |
-| 1 | random | 0.210100 | 0.653367 | 0.262578 | 0.097118 | 0.117673 | 228 |
-| 1 | aligned_pretrained | 0.209500 | 0.652683 | 0.267581 | 0.097164 | 0.123255 | 160 |
-| 1 | aligned_shuffled | 0.209234 | 0.651435 | 0.267557 | 0.097188 | 0.126260 | 145 |
-| 1 | aligned_mtl | 0.210968 | 0.652105 | 0.267529 | 0.097126 | 0.127891 | 155 |
-| 1 | aligned_shuffled_mtl | 0.210801 | 0.653965 | 0.268684 | 0.097101 | 0.122352 | 202 |
-| 2 | clinical | 0.210413 | 0.645467 | 0.264569 | 0.097205 | 0.125534 | 122 |
-| 2 | random | 0.209250 | 0.642346 | 0.258214 | 0.097296 | 0.127864 | 76 |
-| 2 | aligned_pretrained | 0.208734 | 0.646023 | 0.265190 | 0.097240 | 0.134470 | 111 |
-| 2 | aligned_shuffled | 0.206676 | 0.638250 | 0.257917 | 0.097537 | 0.129730 | 55 |
-| 2 | aligned_mtl | 0.209328 | 0.647913 | 0.262543 | 0.097167 | 0.136492 | 122 |
-| 2 | aligned_shuffled_mtl | 0.206815 | 0.638160 | 0.255072 | 0.097492 | 0.133871 | 55 |
-| 3 | clinical | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 0.133370 | 260 |
-| 3 | random | 0.209314 | 0.652652 | 0.267355 | 0.097159 | 0.130584 | 205 |
-| 3 | aligned_pretrained | 0.207126 | 0.651622 | 0.265295 | 0.097205 | 0.131957 | 206 |
-| 3 | aligned_shuffled | 0.207674 | 0.650693 | 0.261549 | 0.097300 | 0.132052 | 119 |
-| 3 | aligned_mtl | 0.208331 | 0.654311 | 0.266365 | 0.097127 | 0.140616 | 297 |
-| 3 | aligned_shuffled_mtl | 0.207690 | 0.651662 | 0.264452 | 0.097225 | 0.131415 | 233 |
-| 4 | clinical | 0.215433 | 0.659047 | 0.265712 | 0.096860 | 0.129450 | 219 |
-| 4 | random | 0.215343 | 0.655447 | 0.266197 | 0.096988 | 0.128029 | 123 |
-| 4 | aligned_pretrained | 0.214791 | 0.657745 | 0.268119 | 0.096840 | 0.132765 | 299 |
-| 4 | aligned_shuffled | 0.214245 | 0.658356 | 0.265908 | 0.096862 | 0.122176 | 224 |
-| 4 | aligned_mtl | 0.214120 | 0.658551 | 0.262239 | 0.096848 | 0.116256 | 300 |
-| 4 | aligned_shuffled_mtl | 0.213207 | 0.655764 | 0.265098 | 0.096976 | 0.129988 | 143 |
-| 5 | clinical | 0.203221 | 0.649278 | 0.262419 | 0.097571 | 0.113508 | 86 |
-| 5 | random | 0.203070 | 0.649496 | 0.261354 | 0.097564 | 0.108552 | 84 |
-| 5 | aligned_pretrained | 0.203458 | 0.652856 | 0.272233 | 0.097459 | 0.121535 | 141 |
-| 5 | aligned_shuffled | 0.201173 | 0.648797 | 0.268081 | 0.097655 | 0.121729 | 66 |
-| 5 | aligned_mtl | 0.202654 | 0.647180 | 0.269700 | 0.097646 | 0.124517 | 62 |
-| 5 | aligned_shuffled_mtl | 0.198271 | 0.643971 | 0.265216 | 0.097948 | 0.125764 | 41 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_xgb_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| aligned_pretrained - aligned_shuffled | 0.000983 | -0.000391 | 0.002484 | 0.917000 | 1000 |
-| aligned_mtl - aligned_shuffled_mtl | 0.001951 | 0.000499 | 0.003313 | 0.995000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_longitudinal_xgb_results/patient_bootstrap.csv)；5 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| random - clinical | -0.000572 | -0.001942 | 0.000717 | 0.196000 | 1000 |
-| aligned_pretrained - clinical | -0.001022 | -0.002469 | 0.000436 | 0.084000 | 1000 |
-| aligned_shuffled - clinical | -0.002004 | -0.003227 | -0.000717 | 0.001000 | 1000 |
-| aligned_mtl - clinical | -0.000847 | -0.002381 | 0.000592 | 0.123000 | 1000 |
-| aligned_shuffled_mtl - clinical | -0.002798 | -0.004336 | -0.001297 | 0.000000 | 1000 |
-
-### meps_multisource_blend_results
-
-MEPS 年度及事件兩種外部標籤共同接入。
-
-來源：[原始指標](results/meps_multisource_blend_results/summary.csv)；5 列、7 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | F1_mean | Brier_mean | ExternalWeight_mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_event | 0.209600 | 0.004306 | 0.652758 | 0.265705 | 0.097179 | 0.360000 |
-| blend_shuffled | 0.209821 | 0.004747 | 0.652792 | 0.266724 | 0.097279 | 0.270000 |
-| clinical | 0.209917 | 0.004455 | 0.652887 | 0.266374 | 0.097167 | 0.000000 |
-| risk_event | 0.208858 | 0.004718 | 0.651500 | 0.264181 | 0.097208 | 1.000000 |
-| risk_shuffled | 0.206571 | 0.007847 | 0.647581 | 0.263210 | 0.097564 | 1.000000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_multisource_blend_results/fold_results.csv)；25 列、12 欄。
-
-| Fold | Experiment | Trees | ExternalWeight | AP | AUROC | F1 | Brier | EncoderEpochs | EncoderValidationAP | BlendValidationAP | ClinicalValidationAP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | clinical | 232 | 0.000000 | 0.211610 | 0.655509 | 0.268027 | 0.097049 | — | — | — | — |
-| 1 | risk_event | 191 | 1.000000 | 0.212906 | 0.654105 | 0.266483 | 0.097018 | 12.000000 | 0.188407 | — | — |
-| 1 | blend_event | 191 | 0.050000 | 0.211803 | 0.655592 | 0.267048 | 0.097040 | 12.000000 | 0.188407 | 0.196030 | 0.195948 |
-| 1 | risk_shuffled | 124 | 1.000000 | 0.210205 | 0.650967 | 0.267644 | 0.097183 | 12.000000 | 0.188933 | — | — |
-| 1 | blend_shuffled | 124 | 0.100000 | 0.211883 | 0.655539 | 0.268008 | 0.097043 | 12.000000 | 0.188933 | 0.196027 | 0.195948 |
-| 2 | clinical | 122 | 0.000000 | 0.210413 | 0.645467 | 0.264569 | 0.097205 | — | — | — | — |
-| 2 | risk_event | 69 | 1.000000 | 0.206164 | 0.642394 | 0.258631 | 0.097395 | 12.000000 | 0.219633 | — | — |
-| 2 | blend_event | 69 | 0.600000 | 0.208850 | 0.644500 | 0.262542 | 0.097278 | 12.000000 | 0.219633 | 0.230473 | 0.228711 |
-| 2 | risk_shuffled | 75 | 1.000000 | 0.210331 | 0.644431 | 0.258777 | 0.097266 | 12.000000 | 0.218877 | — | — |
-| 2 | blend_shuffled | 75 | 0.300000 | 0.210883 | 0.646183 | 0.261817 | 0.097196 | 12.000000 | 0.218877 | 0.229033 | 0.228711 |
-| 3 | clinical | 260 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | — | — | — | — |
-| 3 | risk_event | 253 | 1.000000 | 0.209115 | 0.654842 | 0.267921 | 0.097101 | 8.000000 | 0.185402 | — | — |
-| 3 | blend_event | 253 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 8.000000 | 0.185402 | 0.195288 | 0.195288 |
-| 3 | risk_shuffled | 139 | 1.000000 | 0.205967 | 0.649077 | 0.264503 | 0.097349 | 12.000000 | 0.184545 | — | — |
-| 3 | blend_shuffled | 139 | 0.000000 | 0.208906 | 0.655135 | 0.271144 | 0.097149 | 12.000000 | 0.184545 | 0.195288 | 0.195288 |
-| 4 | clinical | 219 | 0.000000 | 0.215433 | 0.659047 | 0.265712 | 0.096860 | — | — | — | — |
-| 4 | risk_event | 197 | 1.000000 | 0.213710 | 0.657674 | 0.264004 | 0.096949 | 8.000000 | 0.186124 | — | — |
-| 4 | blend_event | 197 | 0.550000 | 0.215049 | 0.659032 | 0.263348 | 0.096875 | 8.000000 | 0.186124 | 0.195599 | 0.194265 |
-| 4 | risk_shuffled | 196 | 1.000000 | 0.213063 | 0.656807 | 0.262062 | 0.096940 | 8.000000 | 0.185685 | — | — |
-| 4 | blend_shuffled | 196 | 0.400000 | 0.215099 | 0.659265 | 0.264240 | 0.096859 | 8.000000 | 0.185685 | 0.194807 | 0.194265 |
-| 5 | clinical | 86 | 0.000000 | 0.203221 | 0.649278 | 0.262419 | 0.097571 | — | — | — | — |
-| 5 | risk_event | 74 | 1.000000 | 0.202393 | 0.648484 | 0.263865 | 0.097576 | 12.000000 | 0.197697 | — | — |
-| 5 | blend_event | 74 | 0.600000 | 0.203390 | 0.649529 | 0.264445 | 0.097552 | 12.000000 | 0.197697 | 0.204990 | 0.202908 |
-| 5 | risk_shuffled | 12 | 1.000000 | 0.193288 | 0.636622 | 0.263064 | 0.099084 | 12.000000 | 0.196143 | — | — |
-| 5 | blend_shuffled | 12 | 0.550000 | 0.202334 | 0.647837 | 0.268413 | 0.098148 | 12.000000 | 0.196143 | 0.203757 | 0.202908 |
-
-#### 配對或外部訊號 bootstrap：external_signal_bootstrap.csv
-
-來源：[原始 CSV](results/meps_multisource_blend_results/external_signal_bootstrap.csv)；2 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_event - risk_shuffled | 0.005061 | 0.003195 | 0.007366 | 1.000000 | 1000 |
-| blend_event - blend_shuffled | 0.001065 | 0.000017 | 0.002144 | 0.976000 | 1000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_multisource_blend_results/patient_bootstrap.csv)；4 列、6 欄。
-
-| Comparison | PooledOOF_DeltaAP | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| risk_event - clinical | -0.001022 | -0.002316 | 0.000324 | 0.054000 | 1000 |
-| blend_event - clinical | -0.000360 | -0.000938 | 0.000217 | 0.122000 | 1000 |
-| risk_shuffled - clinical | -0.006083 | -0.008064 | -0.004080 | 0.000000 | 1000 |
-| blend_shuffled - clinical | -0.001425 | -0.002443 | -0.000476 | 0.001000 | 1000 |
-
-### meps_multitask_results
-
-MEPS 多任務 MLP 及自身 UCI-only MLP 基線。
-
-來源：[原始指標](results/meps_multitask_results/summary.csv)；4 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical_XGB | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| UCI_MLP | 0.222066 | 0.005660 | 0.670126 | 0.002470 | 0.273047 | 0.010707 | 0.096756 | 0.000501 |
-| MEPS_Pretrained | 0.222629 | 0.005404 | 0.672212 | 0.002366 | 0.277824 | 0.005956 | 0.096483 | 0.000190 |
-| MEPS_Multitask | 0.223721 | 0.004248 | 0.671323 | 0.001936 | 0.276909 | 0.008984 | 0.096493 | 0.000198 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_multitask_results/fold_results.csv)；20 列、8 欄。
-
-| Fold | Experiment | AP | AUROC | F1 | Brier | Threshold | Epochs |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical_XGB | 0.238132 | 0.683548 | 0.293738 | 0.095449 | 0.140000 | — |
-| 1 | UCI_MLP | 0.226166 | 0.673336 | 0.279517 | 0.096211 | 0.155000 | 7.000000 |
-| 1 | MEPS_Pretrained | 0.225775 | 0.672419 | 0.278921 | 0.096161 | 0.135000 | 6.000000 |
-| 1 | MEPS_Multitask | 0.225400 | 0.672216 | 0.279805 | 0.096198 | 0.155000 | 7.000000 |
-| 2 | Clinical_XGB | 0.232633 | 0.667082 | 0.281598 | 0.095966 | 0.155000 | — |
-| 2 | UCI_MLP | 0.221870 | 0.667519 | 0.266245 | 0.096885 | 0.120000 | 7.000000 |
-| 2 | MEPS_Pretrained | 0.222275 | 0.668752 | 0.272676 | 0.096618 | 0.165000 | 6.000000 |
-| 2 | MEPS_Multitask | 0.223709 | 0.668140 | 0.262466 | 0.096568 | 0.170000 | 6.000000 |
-| 3 | Clinical_XGB | 0.232634 | 0.678819 | 0.291225 | 0.095713 | 0.150000 | — |
-| 3 | UCI_MLP | 0.216639 | 0.670457 | 0.272508 | 0.096632 | 0.175000 | 9.000000 |
-| 3 | MEPS_Pretrained | 0.214122 | 0.675322 | 0.279828 | 0.096625 | 0.175000 | 4.000000 |
-| 3 | MEPS_Multitask | 0.218008 | 0.673140 | 0.274587 | 0.096701 | 0.130000 | 7.000000 |
-| 4 | Clinical_XGB | 0.237260 | 0.678997 | 0.295133 | 0.095593 | 0.140000 | — |
-| 4 | UCI_MLP | 0.229180 | 0.671497 | 0.287080 | 0.096511 | 0.115000 | 5.000000 |
-| 4 | MEPS_Pretrained | 0.228493 | 0.671697 | 0.286199 | 0.096490 | 0.115000 | 5.000000 |
-| 4 | MEPS_Multitask | 0.229521 | 0.672126 | 0.285305 | 0.096395 | 0.115000 | 5.000000 |
-| 5 | Clinical_XGB | 0.233936 | 0.682955 | 0.291210 | 0.095599 | 0.145000 | — |
-| 5 | UCI_MLP | 0.216477 | 0.667824 | 0.259885 | 0.097541 | 0.215000 | 13.000000 |
-| 5 | MEPS_Pretrained | 0.222478 | 0.672872 | 0.271495 | 0.096522 | 0.185000 | 8.000000 |
-| 5 | MEPS_Multitask | 0.221968 | 0.670992 | 0.282384 | 0.096601 | 0.150000 | 8.000000 |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_multitask_results/patient_bootstrap.csv)；4 列、4 欄。
-
-| Comparison | DeltaAP | CI95_Lower | CI95_Upper |
-| --- | --- | --- | --- |
-| MEPS_Pretrained - UCI_MLP | 0.001847 | -0.000273 | 0.003726 |
-| MEPS_Multitask - UCI_MLP | 0.003363 | 0.001751 | 0.004973 |
-| MEPS_Pretrained - Clinical_XGB | -0.014883 | -0.018363 | -0.011437 |
-| MEPS_Multitask - Clinical_XGB | -0.013367 | -0.016753 | -0.009975 |
-
-### meps_nhanes_dual_external_seed777
-
-MEPS＋NHANES 真實雙外部資料的群組統計和外部多任務預訓練；同切分五折，含兩來源消融和與 CatBoost 原始 ICD-9 固定融合。
-
-#### 五折模型摘要：六指標、標準差與 pooled AP
-
-來源：[原始 CSV](results/meps_nhanes_dual_external_seed777/summary.csv)；17 列、10 欄。
-
-| Experiment | Folds | PR_AUC_mean | PR_AUC_std | AUROC_mean | Precision_mean | Recall_mean | F1_mean | Brier_mean | Pooled_PR_AUC |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ccs_only_hgb | 5 | 0.239179 | 0.004208 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 | 0.237823 |
-| meps_event_ccs_hgb | 5 | 0.239077 | 0.003672 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 | 0.238043 |
-| catboost_raw | 5 | 0.246506 | 0.004438 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 | 0.245430 |
-| ccs_only_catboost_raw50 | 5 | 0.247374 | 0.004744 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 | 0.245932 |
-| meps_event_ccs_catboost_raw50 | 5 | 0.247139 | 0.004049 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 | 0.245889 |
-| grouping_meps | 5 | 0.237652 | 0.004172 | 0.678020 | 0.280765 | 0.246418 | 0.262473 | 0.095536 | 0.236549 |
-| grouping_nhanes | 5 | 0.237939 | 0.003292 | 0.678102 | 0.284592 | 0.249778 | 0.266051 | 0.095526 | 0.236756 |
-| grouping_dual | 5 | 0.237757 | 0.004431 | 0.677639 | 0.279859 | 0.245623 | 0.261626 | 0.095551 | 0.236425 |
-| multitask_meps | 5 | 0.237703 | 0.003706 | 0.677568 | 0.281974 | 0.247480 | 0.263603 | 0.095547 | 0.236463 |
-| multitask_nhanes | 5 | 0.237839 | 0.004661 | 0.677914 | 0.281772 | 0.247303 | 0.263415 | 0.095541 | 0.236538 |
-| multitask_dual | 5 | 0.238303 | 0.004040 | 0.677964 | 0.281269 | 0.246861 | 0.262944 | 0.095536 | 0.236917 |
-| grouping_meps_catboost_raw50 | 5 | 0.246614 | 0.004134 | 0.683273 | 0.287513 | 0.252341 | 0.268781 | 0.095096 | 0.245265 |
-| grouping_nhanes_catboost_raw50 | 5 | 0.246682 | 0.004002 | 0.683301 | 0.288419 | 0.253136 | 0.269628 | 0.095095 | 0.245270 |
-| grouping_dual_catboost_raw50 | 5 | 0.246639 | 0.004664 | 0.683150 | 0.287311 | 0.252164 | 0.268593 | 0.095102 | 0.245246 |
-| multitask_meps_catboost_raw50 | 5 | 0.246751 | 0.004141 | 0.683111 | 0.288922 | 0.253578 | 0.270099 | 0.095096 | 0.245309 |
-| multitask_nhanes_catboost_raw50 | 5 | 0.246684 | 0.004285 | 0.683311 | 0.288218 | 0.252960 | 0.269440 | 0.095099 | 0.245349 |
-| multitask_dual_catboost_raw50 | 5 | 0.246877 | 0.004502 | 0.683299 | 0.287613 | 0.252429 | 0.268875 | 0.095096 | 0.245526 |
-
-#### 每折每模型完整指標
-
-來源：[原始 CSV](results/meps_nhanes_dual_external_seed777/fold_metrics.csv)；85 列、13 欄。
-
-| Fold | Experiment | Test_Rows | Test_Patients | AUROC | PR_AUC | Precision | Recall | F1_score | Brier_Score | Alerted | True_Positive | Positive_Rate |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | ccs_only_hgb | 19869 | 14043 | 0.681268 | 0.240550 | 0.293051 | 0.257067 | 0.273882 | 0.095405 | 1986 | 582 | 0.113946 |
-| 1 | meps_event_ccs_hgb | 19869 | 14043 | 0.681362 | 0.239263 | 0.286506 | 0.251325 | 0.267765 | 0.095440 | 1986 | 569 | 0.113946 |
-| 1 | catboost_raw | 19869 | 14043 | 0.684952 | 0.250130 | 0.288520 | 0.253092 | 0.269647 | 0.094877 | 1986 | 573 | 0.113946 |
-| 1 | ccs_only_catboost_raw50 | 19869 | 14043 | 0.686223 | 0.249205 | 0.291541 | 0.255742 | 0.272471 | 0.094955 | 1986 | 579 | 0.113946 |
-| 1 | meps_event_ccs_catboost_raw50 | 19869 | 14043 | 0.686481 | 0.248603 | 0.290030 | 0.254417 | 0.271059 | 0.094966 | 1986 | 576 | 0.113946 |
-| 1 | grouping_meps | 19869 | 14043 | 0.680444 | 0.240416 | 0.288520 | 0.253092 | 0.269647 | 0.095435 | 1986 | 573 | 0.113946 |
-| 1 | grouping_nhanes | 19869 | 14043 | 0.680069 | 0.238420 | 0.290534 | 0.254859 | 0.271529 | 0.095502 | 1986 | 577 | 0.113946 |
-| 1 | grouping_dual | 19869 | 14043 | 0.679480 | 0.238460 | 0.283484 | 0.248675 | 0.264941 | 0.095524 | 1986 | 563 | 0.113946 |
-| 1 | multitask_meps | 19869 | 14043 | 0.679407 | 0.237615 | 0.284491 | 0.249558 | 0.265882 | 0.095554 | 1986 | 565 | 0.113946 |
-| 1 | multitask_nhanes | 19869 | 14043 | 0.681464 | 0.238203 | 0.284491 | 0.249558 | 0.265882 | 0.095495 | 1986 | 565 | 0.113946 |
-| 1 | multitask_dual | 19869 | 14043 | 0.680879 | 0.239335 | 0.284491 | 0.249558 | 0.265882 | 0.095485 | 1986 | 565 | 0.113946 |
-| 1 | grouping_meps_catboost_raw50 | 19869 | 14043 | 0.685585 | 0.249080 | 0.292548 | 0.256625 | 0.273412 | 0.094963 | 1986 | 581 | 0.113946 |
-| 1 | grouping_nhanes_catboost_raw50 | 19869 | 14043 | 0.685553 | 0.248189 | 0.292548 | 0.256625 | 0.273412 | 0.094999 | 1986 | 581 | 0.113946 |
-| 1 | grouping_dual_catboost_raw50 | 19869 | 14043 | 0.685264 | 0.247908 | 0.291541 | 0.255742 | 0.272471 | 0.095004 | 1986 | 579 | 0.113946 |
-| 1 | multitask_meps_catboost_raw50 | 19869 | 14043 | 0.685181 | 0.247815 | 0.293555 | 0.257509 | 0.274353 | 0.095018 | 1986 | 583 | 0.113946 |
-| 1 | multitask_nhanes_catboost_raw50 | 19869 | 14043 | 0.686369 | 0.248054 | 0.292548 | 0.256625 | 0.273412 | 0.094992 | 1986 | 581 | 0.113946 |
-| 1 | multitask_dual_catboost_raw50 | 19869 | 14043 | 0.685942 | 0.248848 | 0.295569 | 0.259276 | 0.276235 | 0.094989 | 1986 | 587 | 0.113946 |
-| 2 | ccs_only_hgb | 19869 | 13953 | 0.666464 | 0.232899 | 0.266365 | 0.233864 | 0.249058 | 0.095949 | 1986 | 529 | 0.113846 |
-| 2 | meps_event_ccs_hgb | 19869 | 13953 | 0.667040 | 0.233462 | 0.271903 | 0.238727 | 0.254237 | 0.095894 | 1986 | 540 | 0.113846 |
-| 2 | catboost_raw | 19869 | 13953 | 0.675526 | 0.241228 | 0.280463 | 0.246242 | 0.262241 | 0.095386 | 1986 | 557 | 0.113846 |
-| 2 | ccs_only_catboost_raw50 | 19869 | 13953 | 0.673212 | 0.241339 | 0.282477 | 0.248011 | 0.264124 | 0.095464 | 1986 | 561 | 0.113846 |
-| 2 | meps_event_ccs_catboost_raw50 | 19869 | 13953 | 0.673407 | 0.241905 | 0.277946 | 0.244032 | 0.259887 | 0.095445 | 1986 | 552 | 0.113846 |
-| 2 | grouping_meps | 19869 | 13953 | 0.667711 | 0.230362 | 0.267875 | 0.235190 | 0.250471 | 0.095984 | 1986 | 532 | 0.113846 |
-| 2 | grouping_nhanes | 19869 | 13953 | 0.669036 | 0.233030 | 0.274924 | 0.241379 | 0.257062 | 0.095890 | 1986 | 546 | 0.113846 |
-| 2 | grouping_dual | 19869 | 13953 | 0.666731 | 0.231085 | 0.267875 | 0.235190 | 0.250471 | 0.096031 | 1986 | 532 | 0.113846 |
-| 2 | multitask_meps | 19869 | 13953 | 0.666120 | 0.231405 | 0.267372 | 0.234748 | 0.250000 | 0.096007 | 1986 | 531 | 0.113846 |
-| 2 | multitask_nhanes | 19869 | 13953 | 0.666414 | 0.229835 | 0.266365 | 0.233864 | 0.249058 | 0.096048 | 1986 | 529 | 0.113846 |
-| 2 | multitask_dual | 19869 | 13953 | 0.667133 | 0.231621 | 0.269386 | 0.236516 | 0.251883 | 0.095984 | 1986 | 535 | 0.113846 |
-| 2 | grouping_meps_catboost_raw50 | 19869 | 13953 | 0.673714 | 0.240290 | 0.277946 | 0.244032 | 0.259887 | 0.095484 | 1986 | 552 | 0.113846 |
-| 2 | grouping_nhanes_catboost_raw50 | 19869 | 13953 | 0.674648 | 0.241198 | 0.278449 | 0.244474 | 0.260358 | 0.095438 | 1986 | 553 | 0.113846 |
-| 2 | grouping_dual_catboost_raw50 | 19869 | 13953 | 0.673376 | 0.240367 | 0.276435 | 0.242706 | 0.258475 | 0.095506 | 1986 | 549 | 0.113846 |
-| 2 | multitask_meps_catboost_raw50 | 19869 | 13953 | 0.673136 | 0.240698 | 0.278953 | 0.244916 | 0.260829 | 0.095486 | 1986 | 554 | 0.113846 |
-| 2 | multitask_nhanes_catboost_raw50 | 19869 | 13953 | 0.673256 | 0.240353 | 0.278449 | 0.244474 | 0.260358 | 0.095506 | 1986 | 553 | 0.113846 |
-| 2 | multitask_dual_catboost_raw50 | 19869 | 13953 | 0.673634 | 0.240743 | 0.276939 | 0.243148 | 0.258945 | 0.095481 | 1986 | 550 | 0.113846 |
-| 3 | ccs_only_hgb | 19868 | 13973 | 0.679114 | 0.239505 | 0.282477 | 0.248011 | 0.264124 | 0.095439 | 1986 | 561 | 0.113851 |
-| 3 | meps_event_ccs_hgb | 19868 | 13973 | 0.679565 | 0.238764 | 0.275932 | 0.242263 | 0.258004 | 0.095457 | 1986 | 548 | 0.113851 |
-| 3 | catboost_raw | 19868 | 13973 | 0.686355 | 0.244320 | 0.279456 | 0.245358 | 0.261299 | 0.095095 | 1986 | 555 | 0.113851 |
-| 3 | ccs_only_catboost_raw50 | 19868 | 13973 | 0.685068 | 0.245777 | 0.278953 | 0.244916 | 0.260829 | 0.095073 | 1986 | 554 | 0.113851 |
-| 3 | meps_event_ccs_catboost_raw50 | 19868 | 13973 | 0.685695 | 0.245557 | 0.282981 | 0.248453 | 0.264595 | 0.095062 | 1986 | 562 | 0.113851 |
-| 3 | grouping_meps | 19868 | 13973 | 0.679654 | 0.240108 | 0.274924 | 0.241379 | 0.257062 | 0.095405 | 1986 | 546 | 0.113851 |
-| 3 | grouping_nhanes | 19868 | 13973 | 0.679364 | 0.239321 | 0.283484 | 0.248895 | 0.265066 | 0.095440 | 1986 | 563 | 0.113851 |
-| 3 | grouping_dual | 19868 | 13973 | 0.679767 | 0.239537 | 0.276435 | 0.242706 | 0.258475 | 0.095428 | 1986 | 549 | 0.113851 |
-| 3 | multitask_meps | 19868 | 13973 | 0.679260 | 0.239074 | 0.280463 | 0.246242 | 0.262241 | 0.095447 | 1986 | 557 | 0.113851 |
-| 3 | multitask_nhanes | 19868 | 13973 | 0.679771 | 0.240619 | 0.277946 | 0.244032 | 0.259887 | 0.095406 | 1986 | 552 | 0.113851 |
-| 3 | multitask_dual | 19868 | 13973 | 0.678955 | 0.239163 | 0.280463 | 0.246242 | 0.262241 | 0.095474 | 1986 | 557 | 0.113851 |
-| 3 | grouping_meps_catboost_raw50 | 19868 | 13973 | 0.685481 | 0.246201 | 0.283484 | 0.248895 | 0.265066 | 0.095049 | 1986 | 563 | 0.113851 |
-| 3 | grouping_nhanes_catboost_raw50 | 19868 | 13973 | 0.685173 | 0.245774 | 0.286002 | 0.251105 | 0.267420 | 0.095073 | 1986 | 568 | 0.113851 |
-| 3 | grouping_dual_catboost_raw50 | 19868 | 13973 | 0.685476 | 0.246045 | 0.283484 | 0.248895 | 0.265066 | 0.095063 | 1986 | 563 | 0.113851 |
-| 3 | multitask_meps_catboost_raw50 | 19868 | 13973 | 0.685223 | 0.245971 | 0.283484 | 0.248895 | 0.265066 | 0.095069 | 1986 | 563 | 0.113851 |
-| 3 | multitask_nhanes_catboost_raw50 | 19868 | 13973 | 0.685399 | 0.246271 | 0.283988 | 0.249337 | 0.265537 | 0.095055 | 1986 | 564 | 0.113851 |
-| 3 | multitask_dual_catboost_raw50 | 19868 | 13973 | 0.685235 | 0.245493 | 0.282981 | 0.248453 | 0.264595 | 0.095083 | 1986 | 562 | 0.113851 |
-| 4 | ccs_only_hgb | 19869 | 14028 | 0.680544 | 0.244546 | 0.296073 | 0.259832 | 0.276771 | 0.095211 | 1986 | 588 | 0.113896 |
-| 4 | meps_event_ccs_hgb | 19869 | 14028 | 0.680254 | 0.243650 | 0.294058 | 0.258065 | 0.274888 | 0.095309 | 1986 | 584 | 0.113896 |
-| 4 | catboost_raw | 19869 | 14028 | 0.680745 | 0.252006 | 0.288520 | 0.253204 | 0.269711 | 0.094931 | 1986 | 573 | 0.113896 |
-| 4 | ccs_only_catboost_raw50 | 19869 | 14028 | 0.684372 | 0.254202 | 0.298590 | 0.262042 | 0.279124 | 0.094825 | 1986 | 593 | 0.113896 |
-| 4 | meps_event_ccs_catboost_raw50 | 19869 | 14028 | 0.683929 | 0.252915 | 0.293051 | 0.257181 | 0.273947 | 0.094897 | 1986 | 582 | 0.113896 |
-| 4 | grouping_meps | 19869 | 14028 | 0.678535 | 0.239272 | 0.291541 | 0.255855 | 0.272535 | 0.095485 | 1986 | 579 | 0.113896 |
-| 4 | grouping_nhanes | 19869 | 14028 | 0.679647 | 0.241959 | 0.292548 | 0.256739 | 0.273476 | 0.095368 | 1986 | 581 | 0.113896 |
-| 4 | grouping_dual | 19869 | 14028 | 0.679433 | 0.243136 | 0.293555 | 0.257623 | 0.274418 | 0.095327 | 1986 | 583 | 0.113896 |
-| 4 | multitask_meps | 19869 | 14028 | 0.678327 | 0.240845 | 0.290534 | 0.254971 | 0.271593 | 0.095432 | 1986 | 577 | 0.113896 |
-| 4 | multitask_nhanes | 19869 | 14028 | 0.679307 | 0.241527 | 0.296073 | 0.259832 | 0.276771 | 0.095374 | 1986 | 588 | 0.113896 |
-| 4 | multitask_dual | 19869 | 14028 | 0.678415 | 0.242615 | 0.292044 | 0.256297 | 0.273005 | 0.095384 | 1986 | 580 | 0.113896 |
-| 4 | grouping_meps_catboost_raw50 | 19869 | 14028 | 0.683437 | 0.251300 | 0.294562 | 0.258506 | 0.275359 | 0.094958 | 1986 | 585 | 0.113896 |
-| 4 | grouping_nhanes_catboost_raw50 | 19869 | 14028 | 0.683833 | 0.252205 | 0.294562 | 0.258506 | 0.275359 | 0.094902 | 1986 | 585 | 0.113896 |
-| 4 | grouping_dual_catboost_raw50 | 19869 | 14028 | 0.684032 | 0.253314 | 0.296073 | 0.259832 | 0.276771 | 0.094878 | 1986 | 588 | 0.113896 |
-| 4 | multitask_meps_catboost_raw50 | 19869 | 14028 | 0.683509 | 0.252240 | 0.297080 | 0.260716 | 0.277712 | 0.094924 | 1986 | 590 | 0.113896 |
-| 4 | multitask_nhanes_catboost_raw50 | 19869 | 14028 | 0.683871 | 0.252276 | 0.298087 | 0.261600 | 0.278654 | 0.094901 | 1986 | 592 | 0.113896 |
-| 4 | multitask_dual_catboost_raw50 | 19869 | 14028 | 0.683374 | 0.252988 | 0.293555 | 0.257623 | 0.274418 | 0.094906 | 1986 | 583 | 0.113896 |
-| 5 | ccs_only_hgb | 19868 | 13993 | 0.684273 | 0.238394 | 0.284491 | 0.249669 | 0.265945 | 0.095345 | 1986 | 565 | 0.113902 |
-| 5 | meps_event_ccs_hgb | 19868 | 13993 | 0.681198 | 0.240247 | 0.282981 | 0.248343 | 0.264533 | 0.095398 | 1986 | 562 | 0.113902 |
-| 5 | catboost_raw | 19868 | 13993 | 0.686618 | 0.244849 | 0.289023 | 0.253646 | 0.270181 | 0.095130 | 1986 | 574 | 0.113902 |
-| 5 | ccs_only_catboost_raw50 | 19868 | 13993 | 0.688356 | 0.246345 | 0.291541 | 0.255855 | 0.272535 | 0.095023 | 1986 | 579 | 0.113902 |
-| 5 | meps_event_ccs_catboost_raw50 | 19868 | 13993 | 0.686655 | 0.246716 | 0.286506 | 0.251436 | 0.267828 | 0.095066 | 1986 | 569 | 0.113902 |
-| 5 | grouping_meps | 19868 | 13993 | 0.683758 | 0.238101 | 0.280967 | 0.246575 | 0.262650 | 0.095370 | 1986 | 558 | 0.113902 |
-| 5 | grouping_nhanes | 19868 | 13993 | 0.682392 | 0.236963 | 0.281470 | 0.247017 | 0.263121 | 0.095432 | 1986 | 559 | 0.113902 |
-| 5 | grouping_dual | 19868 | 13993 | 0.682783 | 0.236567 | 0.277946 | 0.243924 | 0.259826 | 0.095445 | 1986 | 552 | 0.113902 |
-| 5 | multitask_meps | 19868 | 13993 | 0.684728 | 0.239576 | 0.287009 | 0.251878 | 0.268298 | 0.095293 | 1986 | 570 | 0.113902 |
-| 5 | multitask_nhanes | 19868 | 13993 | 0.682615 | 0.239014 | 0.283988 | 0.249227 | 0.265474 | 0.095384 | 1986 | 564 | 0.113902 |
-| 5 | multitask_dual | 19868 | 13993 | 0.684438 | 0.238783 | 0.279960 | 0.245692 | 0.261709 | 0.095354 | 1986 | 556 | 0.113902 |
-| 5 | grouping_meps_catboost_raw50 | 19868 | 13993 | 0.688148 | 0.246200 | 0.289023 | 0.253646 | 0.270181 | 0.095027 | 1986 | 574 | 0.113902 |
-| 5 | grouping_nhanes_catboost_raw50 | 19868 | 13993 | 0.687297 | 0.246043 | 0.290534 | 0.254971 | 0.271593 | 0.095060 | 1986 | 577 | 0.113902 |
-| 5 | grouping_dual_catboost_raw50 | 19868 | 13993 | 0.687601 | 0.245561 | 0.289023 | 0.253646 | 0.270181 | 0.095061 | 1986 | 574 | 0.113902 |
-| 5 | multitask_meps_catboost_raw50 | 19868 | 13993 | 0.688509 | 0.247029 | 0.291541 | 0.255855 | 0.272535 | 0.094986 | 1986 | 579 | 0.113902 |
-| 5 | multitask_nhanes_catboost_raw50 | 19868 | 13993 | 0.687659 | 0.246468 | 0.288016 | 0.252762 | 0.269240 | 0.095041 | 1986 | 572 | 0.113902 |
-| 5 | multitask_dual_catboost_raw50 | 19868 | 13993 | 0.688312 | 0.246316 | 0.289023 | 0.253646 | 0.270181 | 0.095021 | 1986 | 574 | 0.113902 |
-
-#### 折內病人配對 AP 差值
-
-來源：[原始 CSV](results/meps_nhanes_dual_external_seed777/paired_ap_bootstrap.csv)；17 列、8 欄。
-
-| Treatment | Control | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| grouping_dual | ccs_only_hgb | -0.001422 | -0.003072 | 0.000049 | 0.030000 | 500 | patient within fold |
-| grouping_dual | meps_event_ccs_hgb | -0.001320 | -0.003074 | 0.000578 | 0.076000 | 500 | patient within fold |
-| grouping_dual | grouping_meps | 0.000105 | -0.001107 | 0.001327 | 0.568000 | 500 | patient within fold |
-| grouping_dual | grouping_nhanes | -0.000182 | -0.001496 | 0.001037 | 0.400000 | 500 | patient within fold |
-| grouping_dual_catboost_raw50 | ccs_only_catboost_raw50 | -0.000734 | -0.001529 | 0.000035 | 0.034000 | 500 | patient within fold |
-| grouping_dual_catboost_raw50 | meps_event_ccs_catboost_raw50 | -0.000500 | -0.001447 | 0.000520 | 0.196000 | 500 | patient within fold |
-| grouping_dual_catboost_raw50 | grouping_meps_catboost_raw50 | 0.000025 | -0.000624 | 0.000685 | 0.508000 | 500 | patient within fold |
-| grouping_dual_catboost_raw50 | grouping_nhanes_catboost_raw50 | -0.000043 | -0.000781 | 0.000625 | 0.490000 | 500 | patient within fold |
-| multitask_dual | ccs_only_hgb | -0.000876 | -0.002436 | 0.000313 | 0.066000 | 500 | patient within fold |
-| multitask_dual | meps_event_ccs_hgb | -0.000774 | -0.002267 | 0.000925 | 0.200000 | 500 | patient within fold |
-| multitask_dual | multitask_meps | 0.000600 | -0.001059 | 0.002080 | 0.780000 | 500 | patient within fold |
-| multitask_dual | multitask_nhanes | 0.000464 | -0.000950 | 0.001719 | 0.714000 | 500 | patient within fold |
-| multitask_dual_catboost_raw50 | ccs_only_catboost_raw50 | -0.000496 | -0.001267 | 0.000255 | 0.092000 | 500 | patient within fold |
-| multitask_dual_catboost_raw50 | meps_event_ccs_catboost_raw50 | -0.000262 | -0.001238 | 0.000658 | 0.316000 | 500 | patient within fold |
-| multitask_dual_catboost_raw50 | multitask_meps_catboost_raw50 | 0.000127 | -0.000679 | 0.000911 | 0.608000 | 500 | patient within fold |
-| multitask_dual_catboost_raw50 | multitask_nhanes_catboost_raw50 | 0.000193 | -0.000460 | 0.000908 | 0.700000 | 500 | patient within fold |
-| multitask_dual | grouping_dual | 0.000546 | -0.000981 | 0.002176 | 0.744000 | 500 | patient within fold |
-
-#### 外部來源資料規模與盛行率
-
-來源：[原始 CSV](results/meps_nhanes_dual_external_seed777/external_sources.csv)；2 列、5 欄。
-
-| Source | Rows | Patients | ER_Prevalence | Hospital_Prevalence |
-| --- | --- | --- | --- | --- |
-| MEPS | 21176 | 18160 | 0.240366 | 0.165093 |
-| NHANES | 1747 | 1747 | — | 0.200343 |
-
-#### 多任務預訓練各 epoch loss
-
-來源：[原始 CSV](results/meps_nhanes_dual_external_seed777/external_training.csv)；90 列、3 欄。
-
-| Mode | Epoch | Loss |
-| --- | --- | --- |
-| meps | 1 | 0.716433 |
-| meps | 2 | 0.541007 |
-| meps | 3 | 0.508889 |
-| meps | 4 | 0.505267 |
-| meps | 5 | 0.504440 |
-| meps | 6 | 0.498678 |
-| meps | 7 | 0.488955 |
-| meps | 8 | 0.491845 |
-| meps | 9 | 0.493266 |
-| meps | 10 | 0.491280 |
-| meps | 11 | 0.496736 |
-| meps | 12 | 0.510912 |
-| meps | 13 | 0.498083 |
-| meps | 14 | 0.492692 |
-| meps | 15 | 0.501801 |
-| meps | 16 | 0.488241 |
-| meps | 17 | 0.498462 |
-| meps | 18 | 0.499822 |
-| meps | 19 | 0.494988 |
-| meps | 20 | 0.493613 |
-| meps | 21 | 0.488127 |
-| meps | 22 | 0.493871 |
-| meps | 23 | 0.494187 |
-| meps | 24 | 0.484633 |
-| meps | 25 | 0.486179 |
-| meps | 26 | 0.497215 |
-| meps | 27 | 0.490125 |
-| meps | 28 | 0.500251 |
-| meps | 29 | 0.493602 |
-| meps | 30 | 0.497331 |
-| nhanes | 1 | 0.615626 |
-| nhanes | 2 | 0.615926 |
-| nhanes | 3 | 0.594117 |
-| nhanes | 4 | 0.577066 |
-| nhanes | 5 | 0.592071 |
-| nhanes | 6 | 0.576654 |
-| nhanes | 7 | 0.560000 |
-| nhanes | 8 | 0.574797 |
-| nhanes | 9 | 0.541117 |
-| nhanes | 10 | 0.550704 |
-| nhanes | 11 | 0.544981 |
-| nhanes | 12 | 0.532327 |
-| nhanes | 13 | 0.534076 |
-| nhanes | 14 | 0.536336 |
-| nhanes | 15 | 0.547342 |
-| nhanes | 16 | 0.528309 |
-| nhanes | 17 | 0.519365 |
-| nhanes | 18 | 0.493620 |
-| nhanes | 19 | 0.526081 |
-| nhanes | 20 | 0.478952 |
-| nhanes | 21 | 0.500608 |
-| nhanes | 22 | 0.471107 |
-| nhanes | 23 | 0.476147 |
-| nhanes | 24 | 0.473571 |
-| nhanes | 25 | 0.454764 |
-| nhanes | 26 | 0.467642 |
-| nhanes | 27 | 0.474029 |
-| nhanes | 28 | 0.453050 |
-| nhanes | 29 | 0.510897 |
-| nhanes | 30 | 0.494704 |
-| dual | 1 | 0.727326 |
-| dual | 2 | 0.587174 |
-| dual | 3 | 0.507080 |
-| dual | 4 | 0.496670 |
-| dual | 5 | 0.492082 |
-| dual | 6 | 0.492330 |
-| dual | 7 | 0.495150 |
-| dual | 8 | 0.498498 |
-| dual | 9 | 0.486419 |
-| dual | 10 | 0.484779 |
-| dual | 11 | 0.489472 |
-| dual | 12 | 0.487457 |
-| dual | 13 | 0.488412 |
-| dual | 14 | 0.485676 |
-| dual | 15 | 0.484078 |
-| dual | 16 | 0.477826 |
-| dual | 17 | 0.481182 |
-| dual | 18 | 0.481370 |
-| dual | 19 | 0.486588 |
-| dual | 20 | 0.489337 |
-| dual | 21 | 0.482315 |
-| dual | 22 | 0.479659 |
-| dual | 23 | 0.479635 |
-| dual | 24 | 0.491211 |
-| dual | 25 | 0.478457 |
-| dual | 26 | 0.490223 |
-| dual | 27 | 0.478689 |
-| dual | 28 | 0.477044 |
-| dual | 29 | 0.480848 |
-| dual | 30 | 0.475992 |
-
-### meps_nested_hgb_blend_seed777
-
-內層驗證選 HGB／XGBoost 參數與融合權重；此檔保留 AP、AUROC、Brier 等。
-
-來源：[原始指標](results/meps_nested_hgb_blend_seed777/summary.csv)；4 列、6 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean | XGBWeight_mean |
-| --- | --- | --- | --- | --- | --- |
-| ensemble_fixed_50 | 0.237485 | 0.002471 | 0.678561 | 0.096527 | 0.500000 |
-| ensemble_nested | 0.237015 | 0.002668 | 0.678132 | 0.096766 | 0.500000 |
-| hgb_tuned | 0.237247 | 0.002473 | 0.676933 | 0.095573 | 0.500000 |
-| xgb_meps_tuned | 0.234601 | 0.002320 | 0.677285 | 0.099983 | 0.500000 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_nested_hgb_blend_seed777/fold_results.csv)；20 列、8 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier | XGBWeight | HGBIterations | XGBTrees |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 | 0.677889 | 0.095651 | 0.250000 | 121 | 500 |
-| 1 | xgb_meps_tuned | 0.237468 | 0.682474 | 0.102495 | 0.250000 | 121 | 500 |
-| 1 | ensemble_fixed_50 | 0.238204 | 0.681874 | 0.097052 | 0.250000 | 121 | 500 |
-| 1 | ensemble_nested | 0.237679 | 0.680558 | 0.095846 | 0.250000 | 121 | 500 |
-| 2 | hgb_tuned | 0.235269 | 0.666667 | 0.095854 | 0.500000 | 168 | 500 |
-| 2 | xgb_meps_tuned | 0.232206 | 0.667352 | 0.095964 | 0.500000 | 168 | 500 |
-| 2 | ensemble_fixed_50 | 0.235174 | 0.667987 | 0.095828 | 0.500000 | 168 | 500 |
-| 2 | ensemble_nested | 0.235174 | 0.667987 | 0.095828 | 0.500000 | 168 | 500 |
-| 3 | hgb_tuned | 0.237747 | 0.680836 | 0.095485 | 0.750000 | 82 | 500 |
-| 3 | xgb_meps_tuned | 0.233613 | 0.679097 | 0.103081 | 0.750000 | 82 | 500 |
-| 3 | ensemble_fixed_50 | 0.236854 | 0.680959 | 0.097280 | 0.750000 | 82 | 500 |
-| 3 | ensemble_nested | 0.235031 | 0.680130 | 0.099679 | 0.750000 | 82 | 500 |
-| 4 | hgb_tuned | 0.241348 | 0.678252 | 0.095374 | 0.500000 | 142 | 500 |
-| 4 | xgb_meps_tuned | 0.236657 | 0.678082 | 0.102683 | 0.500000 | 142 | 500 |
-| 4 | ensemble_fixed_50 | 0.241398 | 0.680223 | 0.096980 | 0.500000 | 142 | 500 |
-| 4 | ensemble_nested | 0.241398 | 0.680223 | 0.096980 | 0.500000 | 142 | 500 |
-| 5 | hgb_tuned | 0.236067 | 0.681022 | 0.095501 | 0.500000 | 294 | 500 |
-| 5 | xgb_meps_tuned | 0.233061 | 0.679419 | 0.095694 | 0.500000 | 294 | 500 |
-| 5 | ensemble_fixed_50 | 0.235794 | 0.681760 | 0.095496 | 0.500000 | 294 | 500 |
-| 5 | ensemble_nested | 0.235794 | 0.681760 | 0.095496 | 0.500000 | 294 | 500 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_nested_hgb_blend_seed777/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2471 | 1589 | 0.224201 | 0.239089 | 0.532298 |
-| MEPS_IP_2 | 2471 | 1589 | 0.163497 | 0.206413 | 0.570640 |
-| MEPS_ER_6 | 2466 | 1585 | 0.224655 | 0.314239 | 0.619365 |
-| MEPS_IP_6 | 2466 | 1585 | 0.163828 | 0.257526 | 0.646767 |
-| MEPS_ER_8 | 2466 | 1585 | 0.224655 | 0.322382 | 0.628991 |
-| MEPS_IP_8 | 2466 | 1585 | 0.163828 | 0.283542 | 0.668979 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_nested_hgb_blend_seed777/fold_stratified_patient_bootstrap.csv)；4 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| ensemble_fixed_50 - hgb_tuned | 0.000238 | -0.001029 | 0.001544 | 0.621500 | 2000 | patient within fold |
-| ensemble_nested - hgb_tuned | -0.000231 | -0.001530 | 0.001091 | 0.372500 | 2000 | patient within fold |
-| ensemble_nested - ensemble_fixed_50 | -0.000470 | -0.000848 | -0.000085 | 0.006000 | 2000 | patient within fold |
-| xgb_meps_tuned - hgb_tuned | -0.002646 | -0.005057 | -0.000248 | 0.014500 | 2000 | patient within fold |
-
-#### 配對或外部訊號 bootstrap：patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_nested_hgb_blend_seed777/patient_bootstrap.csv)；3 列、6 欄。
-
-| Comparison | Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | Bootstraps |
-| --- | --- | --- | --- | --- | --- |
-| ensemble_nested - hgb_tuned | -0.007804 | -0.010169 | -0.005450 | 0.000000 | 1000 |
-| ensemble_nested - ensemble_fixed_50 | -0.003413 | -0.004602 | -0.002356 | 0.000000 | 1000 |
-| ensemble_nested - xgb_meps_tuned | 0.008552 | 0.006303 | 0.010527 | 1.000000 | 1000 |
-
-### meps_residual_correction_seed777
-
-較早的 MEPS residual 校正；後續以加權版本為主。
-
-來源：[原始指標](results/meps_residual_correction_seed777/summary.csv)；3 列、5 欄。
-
-| Experiment | PR_AUC_mean | PR_AUC_std | AUROC_mean | Brier_mean |
-| --- | --- | --- | --- | --- |
-| ensemble_fixed_50 | 0.237485 | 0.002471 | 0.678561 | 0.096527 |
-| hgb_tuned | 0.237247 | 0.002473 | 0.676933 | 0.095573 |
-| meps_residual | 0.237245 | 0.002469 | 0.676987 | 0.095565 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_residual_correction_seed777/fold_results.csv)；15 列、5 欄。
-
-| Fold | Experiment | PR_AUC_AP | AUROC | Brier |
-| --- | --- | --- | --- | --- |
-| 1 | hgb_tuned | 0.235802 | 0.677889 | 0.095651 |
-| 1 | meps_residual | 0.235806 | 0.678160 | 0.095620 |
-| 2 | hgb_tuned | 0.235269 | 0.666667 | 0.095854 |
-| 2 | meps_residual | 0.235265 | 0.666665 | 0.095854 |
-| 3 | hgb_tuned | 0.237747 | 0.680836 | 0.095485 |
-| 3 | meps_residual | 0.237747 | 0.680836 | 0.095485 |
-| 4 | hgb_tuned | 0.241348 | 0.678252 | 0.095374 |
-| 4 | meps_residual | 0.241339 | 0.678253 | 0.095368 |
-| 5 | hgb_tuned | 0.236067 | 0.681022 | 0.095501 |
-| 5 | meps_residual | 0.236067 | 0.681022 | 0.095501 |
-| 1 | ensemble_fixed_50 | 0.238204 | 0.681874 | 0.097052 |
-| 2 | ensemble_fixed_50 | 0.235174 | 0.667987 | 0.095828 |
-| 3 | ensemble_fixed_50 | 0.236854 | 0.680959 | 0.097280 |
-| 4 | ensemble_fixed_50 | 0.241398 | 0.680223 | 0.096980 |
-| 5 | ensemble_fixed_50 | 0.235794 | 0.681760 | 0.095496 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_residual_correction_seed777/meps_external_validation.csv)；6 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2471 | 1589 | 0.224201 | 0.239089 | 0.532298 |
-| MEPS_IP_2 | 2471 | 1589 | 0.163497 | 0.206413 | 0.570640 |
-| MEPS_ER_6 | 2466 | 1585 | 0.224655 | 0.314239 | 0.619365 |
-| MEPS_IP_6 | 2466 | 1585 | 0.163828 | 0.257526 | 0.646767 |
-| MEPS_ER_8 | 2466 | 1585 | 0.224655 | 0.322382 | 0.628991 |
-| MEPS_IP_8 | 2466 | 1585 | 0.163828 | 0.283542 | 0.668979 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/meps_residual_correction_seed777/fold_stratified_patient_bootstrap.csv)；3 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| meps_residual - hgb_tuned | -0.000002 | -0.000099 | 0.000085 | 0.528000 | 2000 | patient within fold |
-| meps_residual - ensemble_fixed_50 | -0.000240 | -0.001617 | 0.001144 | 0.360000 | 2000 | patient within fold |
-| ensemble_fixed_50 - hgb_tuned | 0.000238 | -0.001140 | 0.001623 | 0.640500 | 2000 | patient within fold |
-
-### meps_utilization_results
-
-MEPS 年度急診／住院利用率風險直接特徵接法。
-
-來源：[原始指標](results/meps_utilization_results/summary.csv)；7 列、9 欄。
-
-| Experiment | AP_mean | AP_std | AUROC_mean | AUROC_std | F1_mean | F1_std | Brier_mean | Brier_std |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Clinical | 0.234919 | 0.002609 | 0.678280 | 0.006630 | 0.290581 | 0.005296 | 0.095664 | 0.000193 |
-| MEPS_ER_2 | 0.234271 | 0.002916 | 0.678457 | 0.007151 | 0.289144 | 0.007211 | 0.095685 | 0.000218 |
-| MEPS_IP_2 | 0.234324 | 0.002680 | 0.678265 | 0.007406 | 0.289059 | 0.006068 | 0.095680 | 0.000225 |
-| MEPS_Both_2 | 0.234983 | 0.002998 | 0.678269 | 0.006599 | 0.288516 | 0.005422 | 0.095661 | 0.000212 |
-| MEPS_ER_6 | 0.234431 | 0.003564 | 0.678490 | 0.006911 | 0.287681 | 0.006131 | 0.095670 | 0.000241 |
-| MEPS_IP_6 | 0.234257 | 0.002980 | 0.678135 | 0.007058 | 0.288154 | 0.005604 | 0.095686 | 0.000218 |
-| MEPS_Both_6 | 0.234199 | 0.002976 | 0.677947 | 0.006636 | 0.289370 | 0.005907 | 0.095681 | 0.000206 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/meps_utilization_results/fold_results.csv)；35 列、7 欄。
-
-| Fold | Experiment | Features | AP | AUROC | F1 | Brier |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Clinical | 2456 | 0.238132 | 0.683548 | 0.293738 | 0.095449 |
-| 1 | MEPS_ER_2 | 2457 | 0.238589 | 0.684268 | 0.295078 | 0.095438 |
-| 1 | MEPS_IP_2 | 2457 | 0.237794 | 0.684490 | 0.292777 | 0.095461 |
-| 1 | MEPS_Both_2 | 2458 | 0.238685 | 0.682942 | 0.292301 | 0.095448 |
-| 1 | MEPS_ER_6 | 2457 | 0.239540 | 0.684377 | 0.295394 | 0.095381 |
-| 1 | MEPS_IP_6 | 2457 | 0.238338 | 0.684190 | 0.294729 | 0.095445 |
-| 1 | MEPS_Both_6 | 2458 | 0.237608 | 0.683042 | 0.291585 | 0.095475 |
-| 2 | Clinical | 2442 | 0.232633 | 0.667082 | 0.281598 | 0.095966 |
-| 2 | MEPS_ER_2 | 2443 | 0.231450 | 0.666386 | 0.277264 | 0.096027 |
-| 2 | MEPS_IP_2 | 2443 | 0.230910 | 0.665959 | 0.278427 | 0.096032 |
-| 2 | MEPS_Both_2 | 2444 | 0.232081 | 0.667023 | 0.279640 | 0.095993 |
-| 2 | MEPS_ER_6 | 2443 | 0.230653 | 0.667012 | 0.279310 | 0.096035 |
-| 2 | MEPS_IP_6 | 2443 | 0.231514 | 0.666370 | 0.280969 | 0.096017 |
-| 2 | MEPS_Both_6 | 2444 | 0.230378 | 0.666623 | 0.279108 | 0.096016 |
-| 3 | Clinical | 2454 | 0.232634 | 0.678819 | 0.291225 | 0.095713 |
-| 3 | MEPS_ER_2 | 2455 | 0.232167 | 0.678380 | 0.288571 | 0.095731 |
-| 3 | MEPS_IP_2 | 2455 | 0.232475 | 0.677860 | 0.289706 | 0.095743 |
-| 3 | MEPS_Both_2 | 2456 | 0.232222 | 0.678863 | 0.287025 | 0.095736 |
-| 3 | MEPS_ER_6 | 2455 | 0.231892 | 0.677887 | 0.288762 | 0.095738 |
-| 3 | MEPS_IP_6 | 2455 | 0.231423 | 0.678078 | 0.290520 | 0.095764 |
-| 3 | MEPS_Both_6 | 2456 | 0.232327 | 0.678929 | 0.290338 | 0.095704 |
-| 4 | Clinical | 2458 | 0.237260 | 0.678997 | 0.295133 | 0.095593 |
-| 4 | MEPS_ER_2 | 2459 | 0.235756 | 0.680051 | 0.294650 | 0.095618 |
-| 4 | MEPS_IP_2 | 2459 | 0.235146 | 0.679504 | 0.291777 | 0.095639 |
-| 4 | MEPS_Both_2 | 2460 | 0.237426 | 0.679308 | 0.292345 | 0.095581 |
-| 4 | MEPS_ER_6 | 2459 | 0.236313 | 0.679992 | 0.284346 | 0.095604 |
-| 4 | MEPS_IP_6 | 2459 | 0.236052 | 0.679075 | 0.283839 | 0.095628 |
-| 4 | MEPS_Both_6 | 2460 | 0.236582 | 0.678677 | 0.294204 | 0.095646 |
-| 5 | Clinical | 2445 | 0.233936 | 0.682955 | 0.291210 | 0.095599 |
-| 5 | MEPS_ER_2 | 2446 | 0.233391 | 0.683200 | 0.290157 | 0.095610 |
-| 5 | MEPS_IP_2 | 2446 | 0.235294 | 0.683510 | 0.292609 | 0.095523 |
-| 5 | MEPS_Both_2 | 2447 | 0.234503 | 0.683211 | 0.291271 | 0.095549 |
-| 5 | MEPS_ER_6 | 2446 | 0.233758 | 0.683184 | 0.290593 | 0.095593 |
-| 5 | MEPS_IP_6 | 2446 | 0.233959 | 0.682962 | 0.290712 | 0.095573 |
-| 5 | MEPS_Both_6 | 2447 | 0.234100 | 0.682466 | 0.291614 | 0.095566 |
-
-#### 外部資料驗證
-
-來源：[原始 CSV](results/meps_utilization_results/meps_external_validation.csv)；4 列、6 欄。
-
-| Model | ValidationRows | ValidationPatients | Prevalence | AP | AUROC |
-| --- | --- | --- | --- | --- | --- |
-| MEPS_ER_2 | 2471 | 1589 | 0.224201 | 0.240224 | 0.533347 |
-| MEPS_IP_2 | 2471 | 1589 | 0.163497 | 0.207863 | 0.572019 |
-| MEPS_ER_6 | 2466 | 1585 | 0.224655 | 0.313856 | 0.619173 |
-| MEPS_IP_6 | 2466 | 1585 | 0.163828 | 0.259234 | 0.646221 |
-
-### paper_comparison_audit_seed777
-
-只有切分稽核與既有四模型的指標；與後續主表重複，保留核對。
-
-來源：[原始指標](results/paper_comparison_audit_seed777/summary.csv)；4 列、10 欄。
-
-| Model | Folds | PR_AUC_mean | PR_AUC_std | AUROC_mean | Precision_mean | Recall_mean | F1_mean | Brier_mean | Pooled_PR_AUC |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| bhuvan_hgb | 5 | 0.228703 | 0.002883 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 | 0.227821 |
-| roy_hgb_46 | 5 | 0.237261 | 0.001932 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 | 0.235940 |
-| ccs_only_hgb | 5 | 0.239179 | 0.004208 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 | 0.237823 |
-| ccs_meps_group_hgb | 5 | 0.239077 | 0.003672 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 | 0.238043 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/paper_comparison_audit_seed777/fold_metrics.csv)；20 列、14 欄。
-
-| Fold | Model | Test_Rows | Test_Patients | Threshold_Policy | AUROC | PR_AUC | Precision | Recall | F1_score | Brier_Score | Alerted | True_Positive | Positive_Rate |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | bhuvan_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.675954 | 0.226461 | 0.280463 | 0.246025 | 0.262118 | 0.096065 | 1986 | 557 | 0.113946 |
-| 1 | roy_hgb_46 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.679175 | 0.235894 | 0.281470 | 0.246908 | 0.263059 | 0.095618 | 1986 | 559 | 0.113946 |
-| 1 | ccs_only_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.681268 | 0.240550 | 0.293051 | 0.257067 | 0.273882 | 0.095405 | 1986 | 582 | 0.113946 |
-| 1 | ccs_meps_group_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.681362 | 0.239263 | 0.286506 | 0.251325 | 0.267765 | 0.095440 | 1986 | 569 | 0.113946 |
-| 2 | bhuvan_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.662105 | 0.227787 | 0.261329 | 0.229443 | 0.244350 | 0.096239 | 1986 | 519 | 0.113846 |
-| 2 | roy_hgb_46 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.666471 | 0.235216 | 0.269889 | 0.236958 | 0.252354 | 0.095856 | 1986 | 536 | 0.113846 |
-| 2 | ccs_only_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.666464 | 0.232899 | 0.266365 | 0.233864 | 0.249058 | 0.095949 | 1986 | 529 | 0.113846 |
-| 2 | ccs_meps_group_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.667040 | 0.233462 | 0.271903 | 0.238727 | 0.254237 | 0.095894 | 1986 | 540 | 0.113846 |
-| 3 | bhuvan_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.675149 | 0.230301 | 0.264854 | 0.232538 | 0.247646 | 0.095914 | 1986 | 526 | 0.113851 |
-| 3 | roy_hgb_46 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679306 | 0.237472 | 0.274924 | 0.241379 | 0.257062 | 0.095527 | 1986 | 546 | 0.113851 |
-| 3 | ccs_only_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679114 | 0.239505 | 0.282477 | 0.248011 | 0.264124 | 0.095439 | 1986 | 561 | 0.113851 |
-| 3 | ccs_meps_group_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679565 | 0.238764 | 0.275932 | 0.242263 | 0.258004 | 0.095457 | 1986 | 548 | 0.113851 |
-| 4 | bhuvan_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.669004 | 0.226049 | 0.272407 | 0.239063 | 0.254648 | 0.096198 | 1986 | 541 | 0.113896 |
-| 4 | roy_hgb_46 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.677647 | 0.240225 | 0.286506 | 0.251436 | 0.267828 | 0.095464 | 1986 | 569 | 0.113896 |
-| 4 | ccs_only_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.680544 | 0.244546 | 0.296073 | 0.259832 | 0.276771 | 0.095211 | 1986 | 588 | 0.113896 |
-| 4 | ccs_meps_group_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.680254 | 0.243650 | 0.294058 | 0.258065 | 0.274888 | 0.095309 | 1986 | 584 | 0.113896 |
-| 5 | bhuvan_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.676670 | 0.232919 | 0.280967 | 0.246575 | 0.262650 | 0.095796 | 1986 | 558 | 0.113902 |
-| 5 | roy_hgb_46 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.682240 | 0.237498 | 0.283988 | 0.249227 | 0.265474 | 0.095421 | 1986 | 564 | 0.113902 |
-| 5 | ccs_only_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.684273 | 0.238394 | 0.284491 | 0.249669 | 0.265945 | 0.095345 | 1986 | 565 | 0.113902 |
-| 5 | ccs_meps_group_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.681198 | 0.240247 | 0.282981 | 0.248343 | 0.264533 | 0.095398 | 1986 | 562 | 0.113902 |
-
-### paper_fair_comparison_seed777
-
-本專題最新同切分五折主比較；六項指標、AP 標準差和 pooled AP 全列。
-
-來源：[原始指標](results/paper_fair_comparison_seed777/summary.csv)；12 列、10 欄。
-
-| Model | Folds | PR_AUC_mean | PR_AUC_std | AUROC_mean | Precision_mean | Recall_mean | F1_mean | Brier_mean | Pooled_PR_AUC |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| bhuvan_hgb | 5 | 0.228703 | 0.002883 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 | 0.227821 |
-| roy_hgb_46 | 5 | 0.237261 | 0.001932 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 | 0.235940 |
-| ccs_only_hgb | 5 | 0.239179 | 0.004208 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 | 0.237823 |
-| ccs_meps_group_hgb | 5 | 0.239077 | 0.003672 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 | 0.238043 |
-| catboost_family | 5 | 0.244454 | 0.004981 | 0.677482 | 0.284089 | 0.249336 | 0.265580 | 0.095233 | 0.243281 |
-| catboost_raw | 5 | 0.246506 | 0.004438 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 | 0.245430 |
-| bhuvan_hgb_catboost_50 | 5 | 0.241891 | 0.002572 | 0.677469 | 0.283082 | 0.248451 | 0.264638 | 0.095395 | 0.240679 |
-| ccs_only_catboost_50 | 5 | 0.247337 | 0.005275 | 0.681428 | 0.287815 | 0.252606 | 0.269063 | 0.095093 | 0.246005 |
-| ccs_meps_catboost_50 | 5 | 0.247140 | 0.004502 | 0.681210 | 0.288318 | 0.253048 | 0.269534 | 0.095118 | 0.245854 |
-| ccs_only_catboost_raw_50 | 5 | 0.247374 | 0.004744 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 | 0.245932 |
-| ccs_meps_catboost_raw_50 | 5 | 0.247139 | 0.004049 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 | 0.245889 |
-| ccs_meps_refit_hgb | 5 | 0.239077 | 0.003672 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 | 0.238043 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/paper_fair_comparison_seed777/fold_metrics.csv)；60 列、14 欄。
-
-| Fold | Model | Test_Rows | Test_Patients | Threshold_Policy | AUROC | PR_AUC | Precision | Recall | F1_score | Brier_Score | Alerted | True_Positive | Positive_Rate |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | bhuvan_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.675954 | 0.226461 | 0.280463 | 0.246025 | 0.262118 | 0.096065 | 1986 | 557 | 0.113946 |
-| 1 | roy_hgb_46 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.679175 | 0.235894 | 0.281470 | 0.246908 | 0.263059 | 0.095618 | 1986 | 559 | 0.113946 |
-| 1 | ccs_only_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.681268 | 0.240550 | 0.293051 | 0.257067 | 0.273882 | 0.095405 | 1986 | 582 | 0.113946 |
-| 1 | ccs_meps_group_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.681362 | 0.239263 | 0.286506 | 0.251325 | 0.267765 | 0.095440 | 1986 | 569 | 0.113946 |
-| 1 | catboost_family | 19869 | 14043 | top_0.1_fraction_per_fold | 0.681798 | 0.248404 | 0.285498 | 0.250442 | 0.266824 | 0.094987 | 1986 | 567 | 0.113946 |
-| 1 | catboost_raw | 19869 | 14043 | top_0.1_fraction_per_fold | 0.684952 | 0.250130 | 0.288520 | 0.253092 | 0.269647 | 0.094877 | 1986 | 573 | 0.113946 |
-| 1 | bhuvan_hgb_catboost_50 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.682273 | 0.241638 | 0.287009 | 0.251767 | 0.268235 | 0.095264 | 1986 | 570 | 0.113946 |
-| 1 | ccs_only_catboost_50 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.685375 | 0.248767 | 0.290534 | 0.254859 | 0.271529 | 0.094962 | 1986 | 577 | 0.113946 |
-| 1 | ccs_meps_catboost_50 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.685442 | 0.248220 | 0.291037 | 0.255300 | 0.272000 | 0.094975 | 1986 | 578 | 0.113946 |
-| 1 | ccs_only_catboost_raw_50 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.686223 | 0.249205 | 0.291541 | 0.255742 | 0.272471 | 0.094955 | 1986 | 579 | 0.113946 |
-| 1 | ccs_meps_catboost_raw_50 | 19869 | 14043 | top_0.1_fraction_per_fold | 0.686481 | 0.248603 | 0.290030 | 0.254417 | 0.271059 | 0.094966 | 1986 | 576 | 0.113946 |
-| 1 | ccs_meps_refit_hgb | 19869 | 14043 | top_0.1_fraction_per_fold | 0.681362 | 0.239263 | 0.286506 | 0.251325 | 0.267765 | 0.095440 | 1986 | 569 | 0.113946 |
-| 2 | bhuvan_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.662105 | 0.227787 | 0.261329 | 0.229443 | 0.244350 | 0.096239 | 1986 | 519 | 0.113846 |
-| 2 | roy_hgb_46 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.666471 | 0.235216 | 0.269889 | 0.236958 | 0.252354 | 0.095856 | 1986 | 536 | 0.113846 |
-| 2 | ccs_only_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.666464 | 0.232899 | 0.266365 | 0.233864 | 0.249058 | 0.095949 | 1986 | 529 | 0.113846 |
-| 2 | ccs_meps_group_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.667040 | 0.233462 | 0.271903 | 0.238727 | 0.254237 | 0.095894 | 1986 | 540 | 0.113846 |
-| 2 | catboost_family | 19869 | 13953 | top_0.1_fraction_per_fold | 0.668868 | 0.238666 | 0.271400 | 0.238285 | 0.253766 | 0.095564 | 1986 | 539 | 0.113846 |
-| 2 | catboost_raw | 19869 | 13953 | top_0.1_fraction_per_fold | 0.675526 | 0.241228 | 0.280463 | 0.246242 | 0.262241 | 0.095386 | 1986 | 557 | 0.113846 |
-| 2 | bhuvan_hgb_catboost_50 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.667735 | 0.238226 | 0.272910 | 0.239611 | 0.255179 | 0.095665 | 1986 | 542 | 0.113846 |
-| 2 | ccs_only_catboost_50 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.670292 | 0.241152 | 0.277946 | 0.244032 | 0.259887 | 0.095496 | 1986 | 552 | 0.113846 |
-| 2 | ccs_meps_catboost_50 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.670593 | 0.241520 | 0.280463 | 0.246242 | 0.262241 | 0.095493 | 1986 | 557 | 0.113846 |
-| 2 | ccs_only_catboost_raw_50 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.673212 | 0.241339 | 0.282477 | 0.248011 | 0.264124 | 0.095464 | 1986 | 561 | 0.113846 |
-| 2 | ccs_meps_catboost_raw_50 | 19869 | 13953 | top_0.1_fraction_per_fold | 0.673407 | 0.241905 | 0.277946 | 0.244032 | 0.259887 | 0.095445 | 1986 | 552 | 0.113846 |
-| 2 | ccs_meps_refit_hgb | 19869 | 13953 | top_0.1_fraction_per_fold | 0.667040 | 0.233462 | 0.271903 | 0.238727 | 0.254237 | 0.095894 | 1986 | 540 | 0.113846 |
-| 3 | bhuvan_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.675149 | 0.230301 | 0.264854 | 0.232538 | 0.247646 | 0.095914 | 1986 | 526 | 0.113851 |
-| 3 | roy_hgb_46 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679306 | 0.237472 | 0.274924 | 0.241379 | 0.257062 | 0.095527 | 1986 | 546 | 0.113851 |
-| 3 | ccs_only_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679114 | 0.239505 | 0.282477 | 0.248011 | 0.264124 | 0.095439 | 1986 | 561 | 0.113851 |
-| 3 | ccs_meps_group_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679565 | 0.238764 | 0.275932 | 0.242263 | 0.258004 | 0.095457 | 1986 | 548 | 0.113851 |
-| 3 | catboost_family | 19868 | 13973 | top_0.1_fraction_per_fold | 0.680448 | 0.241976 | 0.280463 | 0.246242 | 0.262241 | 0.095269 | 1986 | 557 | 0.113851 |
-| 3 | catboost_raw | 19868 | 13973 | top_0.1_fraction_per_fold | 0.686355 | 0.244320 | 0.279456 | 0.245358 | 0.261299 | 0.095095 | 1986 | 555 | 0.113851 |
-| 3 | bhuvan_hgb_catboost_50 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.680862 | 0.241134 | 0.271903 | 0.238727 | 0.254237 | 0.095364 | 1986 | 540 | 0.113851 |
-| 3 | ccs_only_catboost_50 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.682648 | 0.245588 | 0.282981 | 0.248453 | 0.264595 | 0.095123 | 1986 | 562 | 0.113851 |
-| 3 | ccs_meps_catboost_50 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.683311 | 0.245913 | 0.281470 | 0.247126 | 0.263183 | 0.095109 | 1986 | 559 | 0.113851 |
-| 3 | ccs_only_catboost_raw_50 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.685068 | 0.245777 | 0.278953 | 0.244916 | 0.260829 | 0.095073 | 1986 | 554 | 0.113851 |
-| 3 | ccs_meps_catboost_raw_50 | 19868 | 13973 | top_0.1_fraction_per_fold | 0.685695 | 0.245557 | 0.282981 | 0.248453 | 0.264595 | 0.095062 | 1986 | 562 | 0.113851 |
-| 3 | ccs_meps_refit_hgb | 19868 | 13973 | top_0.1_fraction_per_fold | 0.679565 | 0.238764 | 0.275932 | 0.242263 | 0.258004 | 0.095457 | 1986 | 548 | 0.113851 |
-| 4 | bhuvan_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.669004 | 0.226049 | 0.272407 | 0.239063 | 0.254648 | 0.096198 | 1986 | 541 | 0.113896 |
-| 4 | roy_hgb_46 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.677647 | 0.240225 | 0.286506 | 0.251436 | 0.267828 | 0.095464 | 1986 | 569 | 0.113896 |
-| 4 | ccs_only_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.680544 | 0.244546 | 0.296073 | 0.259832 | 0.276771 | 0.095211 | 1986 | 588 | 0.113896 |
-| 4 | ccs_meps_group_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.680254 | 0.243650 | 0.294058 | 0.258065 | 0.274888 | 0.095309 | 1986 | 584 | 0.113896 |
-| 4 | catboost_family | 19869 | 14028 | top_0.1_fraction_per_fold | 0.676177 | 0.250775 | 0.290030 | 0.254529 | 0.271123 | 0.095062 | 1986 | 576 | 0.113896 |
-| 4 | catboost_raw | 19869 | 14028 | top_0.1_fraction_per_fold | 0.680745 | 0.252006 | 0.288520 | 0.253204 | 0.269711 | 0.094931 | 1986 | 573 | 0.113896 |
-| 4 | bhuvan_hgb_catboost_50 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.675228 | 0.245081 | 0.286002 | 0.250994 | 0.267357 | 0.095403 | 1986 | 568 | 0.113896 |
-| 4 | ccs_only_catboost_50 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.682816 | 0.255424 | 0.298087 | 0.261600 | 0.278654 | 0.094842 | 1986 | 592 | 0.113896 |
-| 4 | ccs_meps_catboost_50 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.682381 | 0.253909 | 0.298590 | 0.262042 | 0.279124 | 0.094922 | 1986 | 593 | 0.113896 |
-| 4 | ccs_only_catboost_raw_50 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.684372 | 0.254202 | 0.298590 | 0.262042 | 0.279124 | 0.094825 | 1986 | 593 | 0.113896 |
-| 4 | ccs_meps_catboost_raw_50 | 19869 | 14028 | top_0.1_fraction_per_fold | 0.683929 | 0.252915 | 0.293051 | 0.257181 | 0.273947 | 0.094897 | 1986 | 582 | 0.113896 |
-| 4 | ccs_meps_refit_hgb | 19869 | 14028 | top_0.1_fraction_per_fold | 0.680254 | 0.243650 | 0.294058 | 0.258065 | 0.274888 | 0.095309 | 1986 | 584 | 0.113896 |
-| 5 | bhuvan_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.676670 | 0.232919 | 0.280967 | 0.246575 | 0.262650 | 0.095796 | 1986 | 558 | 0.113902 |
-| 5 | roy_hgb_46 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.682240 | 0.237498 | 0.283988 | 0.249227 | 0.265474 | 0.095421 | 1986 | 564 | 0.113902 |
-| 5 | ccs_only_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.684273 | 0.238394 | 0.284491 | 0.249669 | 0.265945 | 0.095345 | 1986 | 565 | 0.113902 |
-| 5 | ccs_meps_group_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.681198 | 0.240247 | 0.282981 | 0.248343 | 0.264533 | 0.095398 | 1986 | 562 | 0.113902 |
-| 5 | catboost_family | 19868 | 13993 | top_0.1_fraction_per_fold | 0.680122 | 0.242447 | 0.293051 | 0.257181 | 0.273947 | 0.095282 | 1986 | 582 | 0.113902 |
-| 5 | catboost_raw | 19868 | 13993 | top_0.1_fraction_per_fold | 0.686618 | 0.244849 | 0.289023 | 0.253646 | 0.270181 | 0.095130 | 1986 | 574 | 0.113902 |
-| 5 | bhuvan_hgb_catboost_50 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.681245 | 0.243377 | 0.297583 | 0.261158 | 0.278183 | 0.095280 | 1986 | 591 | 0.113902 |
-| 5 | ccs_only_catboost_50 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.686009 | 0.245752 | 0.289527 | 0.254087 | 0.270652 | 0.095043 | 1986 | 575 | 0.113902 |
-| 5 | ccs_meps_catboost_50 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.684322 | 0.246137 | 0.290030 | 0.254529 | 0.271123 | 0.095093 | 1986 | 576 | 0.113902 |
-| 5 | ccs_only_catboost_raw_50 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.688356 | 0.246345 | 0.291541 | 0.255855 | 0.272535 | 0.095023 | 1986 | 579 | 0.113902 |
-| 5 | ccs_meps_catboost_raw_50 | 19868 | 13993 | top_0.1_fraction_per_fold | 0.686655 | 0.246716 | 0.286506 | 0.251436 | 0.267828 | 0.095066 | 1986 | 569 | 0.113902 |
-| 5 | ccs_meps_refit_hgb | 19868 | 13993 | top_0.1_fraction_per_fold | 0.681198 | 0.240247 | 0.282981 | 0.248343 | 0.264533 | 0.095398 | 1986 | 562 | 0.113902 |
-
-#### 配對或外部訊號 bootstrap：paired_ap_bootstrap.csv
-
-來源：[原始 CSV](results/paper_fair_comparison_seed777/paired_ap_bootstrap.csv)；9 列、8 欄。
-
-| Treatment | Control | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| catboost_family | bhuvan_hgb | 0.015750 | 0.012203 | 0.019482 | 1.000000 | 2000 | patient within fold |
-| catboost_raw | bhuvan_hgb | 0.017803 | 0.014078 | 0.021370 | 1.000000 | 2000 | patient within fold |
-| catboost_family | ccs_only_hgb | 0.005275 | 0.001481 | 0.009036 | 0.998000 | 2000 | patient within fold |
-| catboost_raw | ccs_only_hgb | 0.007327 | 0.004039 | 0.010484 | 1.000000 | 2000 | patient within fold |
-| bhuvan_hgb_catboost_50 | bhuvan_hgb | 0.013188 | 0.011011 | 0.015426 | 1.000000 | 2000 | patient within fold |
-| ccs_meps_catboost_50 | ccs_meps_group_hgb | 0.008063 | 0.005931 | 0.010235 | 1.000000 | 2000 | patient within fold |
-| ccs_meps_catboost_50 | ccs_only_hgb | 0.007961 | 0.005353 | 0.010335 | 1.000000 | 2000 | patient within fold |
-| ccs_meps_catboost_50 | ccs_only_catboost_50 | -0.000197 | -0.001026 | 0.000604 | 0.286000 | 2000 | patient within fold |
-| ccs_meps_catboost_raw_50 | ccs_only_catboost_raw_50 | -0.000234 | -0.001096 | 0.000547 | 0.272500 | 2000 | patient within fold |
-
-### real_external_sources_hgb_seed777
-
-擴大年份 MEPS、NHANES 與兩者並用的真實外部資料比較。
-
-來源：[原始指標](results/real_external_sources_hgb_seed777/summary.csv)；4 列、3 欄。
-
-| Experiment | mean | std |
-| --- | --- | --- |
-| ccs_meps_extended_hgb | 0.238625 | 0.003168 |
-| ccs_meps_nhanes_hgb | 0.238111 | 0.002806 |
-| ccs_nhanes_hgb | 0.237414 | 0.002656 |
-| ccs_only_hgb | 0.239179 | 0.004208 |
-
-#### 逐折或逐模型指標
-
-來源：[原始 CSV](results/real_external_sources_hgb_seed777/fold_results.csv)；20 列、3 欄。
-
-| Fold | Experiment | PR_AUC_AP |
-| --- | --- | --- |
-| 1 | ccs_only_hgb | 0.240550 |
-| 1 | ccs_meps_extended_hgb | 0.241134 |
-| 1 | ccs_nhanes_hgb | 0.241212 |
-| 1 | ccs_meps_nhanes_hgb | 0.239669 |
-| 2 | ccs_only_hgb | 0.232899 |
-| 2 | ccs_meps_extended_hgb | 0.233887 |
-| 2 | ccs_nhanes_hgb | 0.233948 |
-| 2 | ccs_meps_nhanes_hgb | 0.233483 |
-| 3 | ccs_only_hgb | 0.239505 |
-| 3 | ccs_meps_extended_hgb | 0.237209 |
-| 3 | ccs_nhanes_hgb | 0.238357 |
-| 3 | ccs_meps_nhanes_hgb | 0.238233 |
-| 4 | ccs_only_hgb | 0.244546 |
-| 4 | ccs_meps_extended_hgb | 0.241623 |
-| 4 | ccs_nhanes_hgb | 0.236963 |
-| 4 | ccs_meps_nhanes_hgb | 0.240865 |
-| 5 | ccs_only_hgb | 0.238394 |
-| 5 | ccs_meps_extended_hgb | 0.239270 |
-| 5 | ccs_nhanes_hgb | 0.236589 |
-| 5 | ccs_meps_nhanes_hgb | 0.238303 |
-
-#### 配對或外部訊號 bootstrap：fold_stratified_patient_bootstrap.csv
-
-來源：[原始 CSV](results/real_external_sources_hgb_seed777/fold_stratified_patient_bootstrap.csv)；4 列、7 欄。
-
-| Comparison | MeanFold_Delta_PR_AUC | CI95_Lower | CI95_Upper | FractionPositive | BootstrapReplicates | ResamplingUnit |
-| --- | --- | --- | --- | --- | --- | --- |
-| ccs_meps_extended_hgb - ccs_only_hgb | -0.000554 | -0.002312 | 0.001092 | 0.240000 | 2000 | patient within fold |
-| ccs_nhanes_hgb - ccs_only_hgb | -0.001765 | -0.003545 | -0.000067 | 0.019000 | 2000 | patient within fold |
-| ccs_meps_nhanes_hgb - ccs_only_hgb | -0.001068 | -0.002730 | 0.000601 | 0.104500 | 2000 | patient within fold |
-| ccs_meps_nhanes_hgb - ccs_meps_extended_hgb | -0.000514 | -0.001775 | 0.000839 | 0.238000 | 2000 | patient within fold |
-
-### rf_results
-
-最早固定 holdout 的 Random Forest，保留各測試門檻策略。
-
-來源：[原始指標](results/rf_results/rf_metrics.csv)；8 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| rf_standard | validation | default_0.5 | 0.500000 | 0.648300 | 0.185107 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.094888 | 0 | 0 | 13178 | 1601 |
-| rf_standard | validation | val_f1_optimal | 0.116233 | 0.648300 | 0.185107 | 0.642398 | 0.165213 | 0.567770 | 0.255948 | 0.094888 | 909 | 4593 | 8585 | 692 |
-| rf_standard | test | default_0.5 | 0.500000 | 0.647946 | 0.219298 | 0.879716 | 0.000000 | 0.000000 | 0.000000 | 0.103707 | 0 | 0 | 13150 | 1798 |
-| rf_standard | test | val_f1_optimal | 0.116233 | 0.647946 | 0.219298 | 0.637008 | 0.178255 | 0.558954 | 0.270307 | 0.103707 | 1005 | 4633 | 8517 | 793 |
-| rf_balanced | validation | default_0.5 | 0.500000 | 0.643659 | 0.173407 | 0.682252 | 0.168274 | 0.490319 | 0.250559 | 0.228324 | 785 | 3880 | 9298 | 816 |
-| rf_balanced | validation | val_f1_optimal | 0.501347 | 0.643659 | 0.173407 | 0.690304 | 0.170505 | 0.480949 | 0.251757 | 0.228324 | 770 | 3746 | 9432 | 831 |
-| rf_balanced | test | default_0.5 | 0.500000 | 0.649289 | 0.205252 | 0.679756 | 0.187931 | 0.500556 | 0.273266 | 0.228708 | 900 | 3889 | 9261 | 898 |
-| rf_balanced | test | val_f1_optimal | 0.501347 | 0.649289 | 0.205252 | 0.687048 | 0.189789 | 0.489989 | 0.273602 | 0.228708 | 881 | 3761 | 9389 | 917 |
-
-### xgboost_ccs_prefix_results
-
-早期 XGBoost 加 AHRQ CCS 唯一 ICD 前綴對照；為較完整的 CCS 匹配。
-
-來源：[原始指標](results/xgboost_ccs_prefix_results/metrics.csv)；8 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_uci_only | validation | default_0.5 | 0.500000 | 0.650286 | 0.189652 | 0.891535 | 0.000000 | 0.000000 | 0.000000 | 0.093607 | 0 | 2 | 13176 | 1601 |
-| xgb_uci_only | validation | val_f1_optimal | 0.131729 | 0.650286 | 0.189652 | 0.743014 | 0.188898 | 0.416615 | 0.259938 | 0.093607 | 667 | 2864 | 10314 | 934 |
-| xgb_uci_only | test | default_0.5 | 0.500000 | 0.655925 | 0.229119 | 0.880318 | 0.695652 | 0.008899 | 0.017573 | 0.101391 | 16 | 7 | 13143 | 1782 |
-| xgb_uci_only | test | val_f1_optimal | 0.131729 | 0.655925 | 0.229119 | 0.736486 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 755 | 2896 | 10254 | 1043 |
-| xgb_uci_ccs | validation | default_0.5 | 0.500000 | 0.654213 | 0.190852 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.093523 | 0 | 0 | 13178 | 1601 |
-| xgb_uci_ccs | validation | val_f1_optimal | 0.124638 | 0.654213 | 0.190852 | 0.708302 | 0.182967 | 0.488445 | 0.266213 | 0.093523 | 782 | 3492 | 9686 | 819 |
-| xgb_uci_ccs | test | default_0.5 | 0.500000 | 0.658246 | 0.229820 | 0.880385 | 0.692308 | 0.010011 | 0.019737 | 0.101276 | 18 | 8 | 13142 | 1780 |
-| xgb_uci_ccs | test | val_f1_optimal | 0.124638 | 0.658246 | 0.229820 | 0.702836 | 0.199955 | 0.489989 | 0.284010 | 0.101276 | 881 | 3525 | 9625 | 917 |
-
-### xgboost_ccs_results
-
-早期 XGBoost 加 AHRQ CCS 精確 ICD 對照。
-
-來源：[原始指標](results/xgboost_ccs_results/metrics.csv)；8 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_uci_only | validation | default_0.5 | 0.500000 | 0.650286 | 0.189652 | 0.891535 | 0.000000 | 0.000000 | 0.000000 | 0.093607 | 0 | 2 | 13176 | 1601 |
-| xgb_uci_only | validation | val_f1_optimal | 0.131729 | 0.650286 | 0.189652 | 0.743014 | 0.188898 | 0.416615 | 0.259938 | 0.093607 | 667 | 2864 | 10314 | 934 |
-| xgb_uci_only | test | default_0.5 | 0.500000 | 0.655925 | 0.229119 | 0.880318 | 0.695652 | 0.008899 | 0.017573 | 0.101391 | 16 | 7 | 13143 | 1782 |
-| xgb_uci_only | test | val_f1_optimal | 0.131729 | 0.655925 | 0.229119 | 0.736486 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 755 | 2896 | 10254 | 1043 |
-| xgb_uci_ccs | validation | default_0.5 | 0.500000 | 0.644476 | 0.186291 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.093817 | 0 | 0 | 13178 | 1601 |
-| xgb_uci_ccs | validation | val_f1_optimal | 0.124502 | 0.644476 | 0.186291 | 0.716896 | 0.180875 | 0.457214 | 0.259207 | 0.093817 | 732 | 3315 | 9863 | 869 |
-| xgb_uci_ccs | test | default_0.5 | 0.500000 | 0.653881 | 0.229160 | 0.879917 | 0.636364 | 0.003893 | 0.007739 | 0.101562 | 7 | 4 | 13146 | 1791 |
-| xgb_uci_ccs | test | val_f1_optimal | 0.124502 | 0.653881 | 0.229160 | 0.709593 | 0.196901 | 0.459399 | 0.275655 | 0.101562 | 826 | 3369 | 9781 | 972 |
-
-### xgboost_cdc_ccs_prefix_results
-
-早期 XGBoost 同時加入 CDC 群組統計和 CCS 前綴匹配。
-
-來源：[原始指標](results/xgboost_cdc_ccs_prefix_results/metrics.csv)；16 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_uci_only | validation | default_0.5 | 0.500000 | 0.650286 | 0.189652 | 0.891535 | 0.000000 | 0.000000 | 0.000000 | 0.093607 | 0 | 2 | 13176 | 1601 |
-| xgb_uci_only | validation | val_f1_optimal | 0.131729 | 0.650286 | 0.189652 | 0.743014 | 0.188898 | 0.416615 | 0.259938 | 0.093607 | 667 | 2864 | 10314 | 934 |
-| xgb_uci_only | test | default_0.5 | 0.500000 | 0.655925 | 0.229119 | 0.880318 | 0.695652 | 0.008899 | 0.017573 | 0.101391 | 16 | 7 | 13143 | 1782 |
-| xgb_uci_only | test | val_f1_optimal | 0.131729 | 0.655925 | 0.229119 | 0.736486 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 755 | 2896 | 10254 | 1043 |
-| xgb_uci_cdc | validation | default_0.5 | 0.500000 | 0.645196 | 0.187856 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.093749 | 0 | 0 | 13178 | 1601 |
-| xgb_uci_cdc | validation | val_f1_optimal | 0.129188 | 0.645196 | 0.187856 | 0.736789 | 0.184798 | 0.419113 | 0.256498 | 0.093749 | 671 | 2960 | 10218 | 930 |
-| xgb_uci_cdc | test | default_0.5 | 0.500000 | 0.653286 | 0.227831 | 0.880051 | 0.692308 | 0.005006 | 0.009939 | 0.101573 | 9 | 4 | 13146 | 1789 |
-| xgb_uci_cdc | test | val_f1_optimal | 0.129188 | 0.653286 | 0.227831 | 0.731469 | 0.204060 | 0.424917 | 0.275713 | 0.101573 | 764 | 2980 | 10170 | 1034 |
-| xgb_uci_ccs | validation | default_0.5 | 0.500000 | 0.654213 | 0.190852 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.093523 | 0 | 0 | 13178 | 1601 |
-| xgb_uci_ccs | validation | val_f1_optimal | 0.124638 | 0.654213 | 0.190852 | 0.708302 | 0.182967 | 0.488445 | 0.266213 | 0.093523 | 782 | 3492 | 9686 | 819 |
-| xgb_uci_ccs | test | default_0.5 | 0.500000 | 0.658246 | 0.229820 | 0.880385 | 0.692308 | 0.010011 | 0.019737 | 0.101276 | 18 | 8 | 13142 | 1780 |
-| xgb_uci_ccs | test | val_f1_optimal | 0.124638 | 0.658246 | 0.229820 | 0.702836 | 0.199955 | 0.489989 | 0.284010 | 0.101276 | 881 | 3525 | 9625 | 917 |
-| xgb_uci_cdc_ccs | validation | default_0.5 | 0.500000 | 0.647309 | 0.188520 | 0.891603 | 0.000000 | 0.000000 | 0.000000 | 0.093711 | 0 | 1 | 13177 | 1601 |
-| xgb_uci_cdc_ccs | validation | val_f1_optimal | 0.128037 | 0.647309 | 0.188520 | 0.731105 | 0.185028 | 0.435353 | 0.259687 | 0.093711 | 697 | 3070 | 10108 | 904 |
-| xgb_uci_cdc_ccs | test | default_0.5 | 0.500000 | 0.654592 | 0.229389 | 0.879783 | 0.600000 | 0.001669 | 0.003328 | 0.101517 | 3 | 2 | 13148 | 1795 |
-| xgb_uci_cdc_ccs | test | val_f1_optimal | 0.128037 | 0.654592 | 0.229389 | 0.725515 | 0.203040 | 0.438265 | 0.277514 | 0.101517 | 788 | 3093 | 10057 | 1010 |
-
-### xgboost_cdc_results
-
-早期 XGBoost 加 CDC 群組風險統計。
-
-來源：[原始指標](results/xgboost_cdc_results/metrics.csv)；8 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_uci_only | validation | default_0.5 | 0.500000 | 0.650286 | 0.189652 | 0.891535 | 0.000000 | 0.000000 | 0.000000 | 0.093607 | 0 | 2 | 13176 | 1601 |
-| xgb_uci_only | validation | val_f1_optimal | 0.131729 | 0.650286 | 0.189652 | 0.743014 | 0.188898 | 0.416615 | 0.259938 | 0.093607 | 667 | 2864 | 10314 | 934 |
-| xgb_uci_only | test | default_0.5 | 0.500000 | 0.655925 | 0.229119 | 0.880318 | 0.695652 | 0.008899 | 0.017573 | 0.101391 | 16 | 7 | 13143 | 1782 |
-| xgb_uci_only | test | val_f1_optimal | 0.131729 | 0.655925 | 0.229119 | 0.736486 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 755 | 2896 | 10254 | 1043 |
-| xgb_uci_cdc | validation | default_0.5 | 0.500000 | 0.645196 | 0.187856 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.093749 | 0 | 0 | 13178 | 1601 |
-| xgb_uci_cdc | validation | val_f1_optimal | 0.129188 | 0.645196 | 0.187856 | 0.736789 | 0.184798 | 0.419113 | 0.256498 | 0.093749 | 671 | 2960 | 10218 | 930 |
-| xgb_uci_cdc | test | default_0.5 | 0.500000 | 0.653286 | 0.227831 | 0.880051 | 0.692308 | 0.005006 | 0.009939 | 0.101573 | 9 | 4 | 13146 | 1789 |
-| xgb_uci_cdc | test | val_f1_optimal | 0.129188 | 0.653286 | 0.227831 | 0.731469 | 0.204060 | 0.424917 | 0.275713 | 0.101573 | 764 | 2980 | 10170 | 1034 |
-
-### xgboost_results
-
-最早固定 holdout 的 XGBoost，保留標準／加權模型與門檻策略。
-
-來源：[原始指標](results/xgboost_results/xgb_metrics.csv)；8 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_standard | validation | default_0.5 | 0.500000 | 0.650286 | 0.189652 | 0.891535 | 0.000000 | 0.000000 | 0.000000 | 0.093607 | 0 | 2 | 13176 | 1601 |
-| xgb_standard | validation | val_f1_optimal | 0.131729 | 0.650286 | 0.189652 | 0.743014 | 0.188898 | 0.416615 | 0.259938 | 0.093607 | 667 | 2864 | 10314 | 934 |
-| xgb_standard | test | default_0.5 | 0.500000 | 0.655925 | 0.229119 | 0.880318 | 0.695652 | 0.008899 | 0.017573 | 0.101391 | 16 | 7 | 13143 | 1782 |
-| xgb_standard | test | val_f1_optimal | 0.131729 | 0.655925 | 0.229119 | 0.736486 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 755 | 2896 | 10254 | 1043 |
-| xgb_balanced | validation | default_0.5 | 0.500000 | 0.630862 | 0.180741 | 0.654374 | 0.157720 | 0.504685 | 0.240333 | 0.242827 | 808 | 4315 | 8863 | 793 |
-| xgb_balanced | validation | val_f1_optimal | 0.507230 | 0.630862 | 0.180741 | 0.687800 | 0.164999 | 0.463460 | 0.243358 | 0.242827 | 742 | 3755 | 9423 | 859 |
-| xgb_balanced | test | default_0.5 | 0.500000 | 0.641720 | 0.218236 | 0.652863 | 0.179671 | 0.528921 | 0.268227 | 0.242900 | 951 | 4342 | 8808 | 847 |
-| xgb_balanced | test | val_f1_optimal | 0.507230 | 0.641720 | 0.218236 | 0.687717 | 0.189797 | 0.488320 | 0.273350 | 0.242900 | 878 | 3748 | 9402 | 920 |
-
-### xgboost_smote_0.20
-
-固定 holdout 的 SMOTENC 少數／多數比 0.20；保留所有門檻列。
-
-來源：[原始指標](results/xgboost_smote_0.20/xgb_metrics.csv)；4 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_smotenc_0p2 | validation | default_0.5 | 0.500000 | 0.646647 | 0.189719 | 0.891738 | 1.000000 | 0.000625 | 0.001248 | 0.094028 | 1 | 0 | 13178 | 1600 |
-| xgb_smotenc_0p2 | validation | val_f1_optimal | 0.150355 | 0.646647 | 0.189719 | 0.762163 | 0.195804 | 0.384760 | 0.259532 | 0.094028 | 616 | 2530 | 10648 | 985 |
-| xgb_smotenc_0p2 | test | default_0.5 | 0.500000 | 0.653477 | 0.224612 | 0.879583 | 0.250000 | 0.000556 | 0.001110 | 0.101636 | 1 | 3 | 13147 | 1797 |
-| xgb_smotenc_0p2 | test | val_f1_optimal | 0.150355 | 0.653477 | 0.224612 | 0.755419 | 0.213095 | 0.383760 | 0.274027 | 0.101636 | 690 | 2548 | 10602 | 1108 |
-
-### xgboost_smote_0.35
-
-固定 holdout 的 SMOTENC 少數／多數比 0.35；保留所有門檻列。
-
-來源：[原始指標](results/xgboost_smote_0.35/xgb_metrics.csv)；4 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_smotenc_0p35 | validation | default_0.5 | 0.500000 | 0.626355 | 0.180918 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.097223 | 0 | 0 | 13178 | 1601 |
-| xgb_smotenc_0p35 | validation | val_f1_optimal | 0.189829 | 0.626355 | 0.180918 | 0.746735 | 0.181818 | 0.382261 | 0.246426 | 0.097223 | 612 | 2754 | 10424 | 989 |
-| xgb_smotenc_0p35 | test | default_0.5 | 0.500000 | 0.639436 | 0.213285 | 0.879516 | 0.000000 | 0.000000 | 0.000000 | 0.104107 | 0 | 3 | 13147 | 1798 |
-| xgb_smotenc_0p35 | test | val_f1_optimal | 0.189829 | 0.639436 | 0.213285 | 0.738493 | 0.199886 | 0.390990 | 0.264534 | 0.104107 | 703 | 2814 | 10336 | 1095 |
-
-### xgboost_smote_0.50
-
-固定 holdout 的 SMOTENC 少數／多數比 0.50；保留所有門檻列。
-
-來源：[原始指標](results/xgboost_smote_0.50/xgb_metrics.csv)；4 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_smotenc_0p5 | validation | default_0.5 | 0.500000 | 0.611587 | 0.173024 | 0.891332 | 0.380952 | 0.004997 | 0.009864 | 0.102124 | 8 | 13 | 13165 | 1593 |
-| xgb_smotenc_0p5 | validation | val_f1_optimal | 0.199494 | 0.611587 | 0.173024 | 0.643887 | 0.152825 | 0.503435 | 0.234473 | 0.102124 | 806 | 4468 | 8710 | 795 |
-| xgb_smotenc_0p5 | test | default_0.5 | 0.500000 | 0.628686 | 0.201799 | 0.879449 | 0.428571 | 0.006674 | 0.013143 | 0.108397 | 12 | 16 | 13134 | 1786 |
-| xgb_smotenc_0p5 | test | val_f1_optimal | 0.199494 | 0.628686 | 0.201799 | 0.638012 | 0.167984 | 0.508343 | 0.252521 | 0.108397 | 914 | 4527 | 8623 | 884 |
-
-### xgboost_smote_1.00
-
-固定 holdout 的 SMOTENC 少數／多數比 1.00；保留所有門檻列。
-
-來源：[原始指標](results/xgboost_smote_1.00/xgb_metrics.csv)；4 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_smotenc_1p0 | validation | default_0.5 | 0.500000 | 0.590083 | 0.163787 | 0.882265 | 0.270627 | 0.051218 | 0.086134 | 0.127839 | 82 | 221 | 12957 | 1519 |
-| xgb_smotenc_1p0 | validation | val_f1_optimal | 0.311395 | 0.590083 | 0.163787 | 0.663780 | 0.148728 | 0.445347 | 0.222987 | 0.127839 | 713 | 4081 | 9097 | 888 |
-| xgb_smotenc_1p0 | test | default_0.5 | 0.500000 | 0.612077 | 0.194979 | 0.871220 | 0.333333 | 0.070634 | 0.116567 | 0.132120 | 127 | 254 | 12896 | 1671 |
-| xgb_smotenc_1p0 | test | val_f1_optimal | 0.311395 | 0.612077 | 0.194979 | 0.658282 | 0.169000 | 0.469967 | 0.248603 | 0.132120 | 845 | 4155 | 8995 | 953 |
-
-### xgboost_smote_results
-
-早期 SMOTENC 保存的總實驗輸出；與比例特定實驗可能重複。
-
-來源：[原始指標](results/xgboost_smote_results/xgb_metrics.csv)；4 列、15 欄。
-
-| model | split | threshold_policy | threshold | AUROC | PR_AUC_AP | Accuracy | Precision | Recall | F1 | Brier | TP | FP | TN | FN |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| xgb_smotenc_0p35 | validation | default_0.5 | 0.500000 | 0.626355 | 0.180918 | 0.891671 | 0.000000 | 0.000000 | 0.000000 | 0.097223 | 0 | 0 | 13178 | 1601 |
-| xgb_smotenc_0p35 | validation | val_f1_optimal | 0.189829 | 0.626355 | 0.180918 | 0.746735 | 0.181818 | 0.382261 | 0.246426 | 0.097223 | 612 | 2754 | 10424 | 989 |
-| xgb_smotenc_0p35 | test | default_0.5 | 0.500000 | 0.639436 | 0.213285 | 0.879516 | 0.000000 | 0.000000 | 0.000000 | 0.104107 | 0 | 3 | 13147 | 1798 |
-| xgb_smotenc_0p35 | test | val_f1_optimal | 0.189829 | 0.639436 | 0.213285 | 0.738493 | 0.199886 | 0.390990 | 0.264534 | 0.104107 | 703 | 2814 | 10336 | 1095 |
-
-<!-- AUTO_METRICS_END -->
-
-## 10. 復現專案的完整保存指標
-
-以下逐表保留兩個相鄰復現專案的**全部彙總、開發驗證、操作點與 SHAP 指標 CSV 欄位**。每節明確標示原 80/20 或本專題同切分五折；不可跨節以 AP 數字直接排名。`shap_missed_cases.csv` 是個案列而非彙總指標，基於報告只列彙總資料的原則不複製其個案內容；可到來源檔追溯。
-
-### 10.1 Rajpoot 原論文的 80/20 復現
-
-這些是原 99,340 筆資料／80/20 病人互斥測試的指標、操作點、校準及論文對照。
-
-#### bootstrap_summary.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/bootstrap_summary.csv)；12 列。
-
-| features | metric | estimate | lower | upper | replicates | seed |
-| --- | --- | --- | --- | --- | --- | --- |
-| admission | auroc | 0.630762 | 0.615527 | 0.645551 | 500 | 2028 |
-| admission | ap | 0.205766 | 0.183854 | 0.229538 | 500 | 2028 |
-| admission | brier | 0.098780 | 0.095471 | 0.102151 | 500 | 2028 |
-| admission | log_loss | 0.344648 | 0.335679 | 0.353735 | 500 | 2028 |
-| discharge | auroc | 0.679955 | 0.666512 | 0.692711 | 500 | 2028 |
-| discharge | ap | 0.237372 | 0.215248 | 0.258320 | 500 | 2028 |
-| discharge | brier | 0.096505 | 0.093356 | 0.099817 | 500 | 2028 |
-| discharge | log_loss | 0.334749 | 0.325854 | 0.343579 | 500 | 2028 |
-| difference | auroc | 0.049193 | 0.039256 | 0.059479 | 500 | 2028 |
-| difference | ap | 0.031606 | 0.022414 | 0.041765 | 500 | 2028 |
-| difference | brier | -0.002276 | -0.002883 | -0.001735 | 500 | 2028 |
-| difference | log_loss | -0.009899 | -0.011954 | -0.007725 | 500 | 2028 |
-
-#### calibration_deciles.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/calibration_deciles.csv)；20 列。
-
-| features | bin | encounters | mean_predicted | event_rate |
-| --- | --- | --- | --- | --- |
-| admission | (0.0217, 0.0721] | 1995 | 0.060906 | 0.067669 |
-| admission | (0.0721, 0.082] | 1994 | 0.077277 | 0.071715 |
-| admission | (0.082, 0.09] | 1995 | 0.086210 | 0.077694 |
-| admission | (0.09, 0.0961] | 2041 | 0.093128 | 0.083293 |
-| admission | (0.0961, 0.101] | 2031 | 0.098851 | 0.096012 |
-| admission | (0.101, 0.107] | 1939 | 0.104362 | 0.113976 |
-| admission | (0.107, 0.114] | 1964 | 0.110215 | 0.095723 |
-| admission | (0.114, 0.132] | 2079 | 0.122535 | 0.139971 |
-| admission | (0.132, 0.163] | 1913 | 0.144329 | 0.161004 |
-| admission | (0.163, 0.973] | 1991 | 0.254697 | 0.246610 |
-| discharge | (0.0119, 0.0502] | 1995 | 0.040578 | 0.048120 |
-| discharge | (0.0502, 0.0627] | 1994 | 0.056754 | 0.051153 |
-| discharge | (0.0627, 0.0732] | 1994 | 0.067845 | 0.065196 |
-| discharge | (0.0732, 0.0839] | 1994 | 0.078526 | 0.069208 |
-| discharge | (0.0839, 0.0972] | 1994 | 0.090235 | 0.082748 |
-| discharge | (0.0972, 0.113] | 1994 | 0.105081 | 0.102808 |
-| discharge | (0.113, 0.131] | 1994 | 0.121894 | 0.128385 |
-| discharge | (0.131, 0.153] | 1994 | 0.140890 | 0.127382 |
-| discharge | (0.153, 0.192] | 1994 | 0.169683 | 0.193581 |
-| discharge | (0.192, 0.605] | 1995 | 0.265320 | 0.283208 |
-
-#### intervals_vs_paper.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/intervals_vs_paper.csv)；5 列。
-
-| features | metric | estimate_reproduction | lower_reproduction | upper_reproduction | replicates | seed | estimate_paper | lower_paper | upper_paper |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| admission | auroc | 0.630762 | 0.615527 | 0.645551 | 500 | 2028 | 0.631000 | 0.615000 | 0.646000 |
-| discharge | auroc | 0.679955 | 0.666512 | 0.692711 | 500 | 2028 | 0.677000 | 0.663000 | 0.689000 |
-| difference | auroc | 0.049193 | 0.039256 | 0.059479 | 500 | 2028 | 0.046000 | 0.036000 | 0.056000 |
-| difference | ap | 0.031606 | 0.022414 | 0.041765 | 500 | 2028 | 0.032000 | 0.020000 | 0.042000 |
-| difference | brier | -0.002276 | -0.002883 | -0.001735 | 500 | 2028 | -0.002200 | -0.002800 | -0.001600 |
-
-#### model_comparison.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/model_comparison.csv)；4 列。
-
-| features | model | selected | dev_auroc | dev_ap | dev_brier | dev_log_loss | dev_calibration_intercept | dev_calibration_slope | test_auroc | test_ap | test_brier | test_log_loss | test_calibration_intercept | test_calibration_slope |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| admission | logistic | True | 0.624119 | 0.192500 | 0.098038 | 0.342694 | -0.107975 | 0.945425 | 0.630762 | 0.205766 | 0.098780 | 0.344648 | -0.177835 | 0.909700 |
-| admission | hgb | False | 0.622929 | 0.188309 | 0.098110 | 0.343094 | -0.260546 | 0.865054 | 0.632798 | 0.205706 | 0.098546 | 0.343762 | -0.102950 | 0.939778 |
-| discharge | logistic | False | 0.658231 | 0.210658 | 0.096898 | 0.337152 | -0.153341 | 0.920372 | 0.664305 | 0.227239 | 0.097319 | 0.338267 | -0.114772 | 0.936934 |
-| discharge | hgb | True | 0.666130 | 0.220926 | 0.096159 | 0.334636 | -0.006514 | 0.993158 | 0.679955 | 0.237372 | 0.096505 | 0.334749 | 0.147856 | 1.069105 |
-
-#### paper_vs_reproduction.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/paper_vs_reproduction.csv)；4 列。
-
-| features | model | selected_reproduction | dev_auroc_reproduction | dev_ap_reproduction | dev_brier | dev_log_loss | dev_calibration_intercept | dev_calibration_slope | test_auroc_reproduction | test_ap_reproduction | test_brier_reproduction | test_log_loss | test_calibration_intercept | test_calibration_slope_reproduction | selected_paper | dev_auroc_paper | dev_ap_paper | test_auroc_paper | test_ap_paper | test_brier_paper | test_calibration_slope_paper | dev_auroc_difference | dev_ap_difference | test_auroc_difference | test_ap_difference | test_brier_difference | test_calibration_slope_difference |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| admission | logistic | True | 0.624119 | 0.192500 | 0.098038 | 0.342694 | -0.107975 | 0.945425 | 0.630762 | 0.205766 | 0.098780 | 0.344648 | -0.177835 | 0.909700 | True | 0.627000 | 0.194000 | 0.631000 | 0.206000 | 0.098800 | 0.913000 | -0.002881 | -0.001500 | -0.000238 | -0.000234 | -0.000020 | -0.003300 |
-| admission | hgb | False | 0.622929 | 0.188309 | 0.098110 | 0.343094 | -0.260546 | 0.865054 | 0.632798 | 0.205706 | 0.098546 | 0.343762 | -0.102950 | 0.939778 | False | 0.625000 | 0.190000 | 0.633000 | 0.206000 | 0.098600 | 0.944000 | -0.002071 | -0.001691 | -0.000202 | -0.000294 | -0.000054 | -0.004222 |
-| discharge | logistic | False | 0.658231 | 0.210658 | 0.096898 | 0.337152 | -0.153341 | 0.920372 | 0.664305 | 0.227239 | 0.097319 | 0.338267 | -0.114772 | 0.936934 | False | 0.644000 | 0.200000 | 0.649000 | 0.213000 | 0.098200 | 0.908000 | 0.014231 | 0.010658 | 0.015305 | 0.014239 | -0.000881 | 0.028934 |
-| discharge | hgb | True | 0.666130 | 0.220926 | 0.096159 | 0.334636 | -0.006514 | 0.993158 | 0.679955 | 0.237372 | 0.096505 | 0.334749 | 0.147856 | 1.069105 | True | 0.665000 | 0.220000 | 0.677000 | 0.237000 | 0.096600 | 1.046000 | 0.001130 | 0.000926 | 0.002955 | 0.000372 | -0.000095 | 0.023105 |
-
-#### subgroups.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/subgroups.csv)；12 列。
-
-| attribute | group | features | encounters | patients | positives | prevalence | auroc | ap | brier | log_loss | threshold | tn | fp | fn | tp | sensitivity | specificity | ppv | npv | f1 | f2 | alert_rate |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| gender | Female | admission | 10768 | 7524 | 1275 | 0.118406 | 0.628150 | 0.207893 | 0.101317 | 0.351884 | 0.080390 | 1809 | 7684 | 138 | 1137 | 0.891765 | 0.190561 | 0.128897 | 0.929122 | 0.225238 | 0.408376 | 0.819186 |
-| gender | Female | discharge | 10768 | 7524 | 1275 | 0.118406 | 0.677644 | 0.240316 | 0.098943 | 0.341297 | 0.083103 | 3913 | 5580 | 250 | 1025 | 0.803922 | 0.412198 | 0.155185 | 0.939947 | 0.260152 | 0.437847 | 0.613392 |
-| gender | Male | admission | 9174 | 6475 | 1022 | 0.111402 | 0.634366 | 0.203350 | 0.095803 | 0.336155 | 0.080390 | 1543 | 6609 | 110 | 912 | 0.892368 | 0.189279 | 0.121260 | 0.933454 | 0.213508 | 0.392799 | 0.819817 |
-| gender | Male | discharge | 9174 | 6475 | 1022 | 0.111402 | 0.682299 | 0.234909 | 0.093642 | 0.327063 | 0.083103 | 3462 | 4690 | 208 | 814 | 0.796477 | 0.424681 | 0.147892 | 0.943324 | 0.249464 | 0.424312 | 0.599956 |
-| race | Caucasian | admission | 14964 | 10500 | 1717 | 0.114742 | 0.629551 | 0.199945 | 0.098784 | 0.344648 | 0.080390 | 2284 | 10963 | 164 | 1553 | 0.904485 | 0.172416 | 0.124081 | 0.933007 | 0.218225 | 0.400588 | 0.836407 |
-| race | Caucasian | discharge | 14964 | 10500 | 1717 | 0.114742 | 0.678619 | 0.235031 | 0.096291 | 0.334327 | 0.083103 | 5312 | 7935 | 328 | 1389 | 0.808969 | 0.400996 | 0.148970 | 0.941844 | 0.251608 | 0.428916 | 0.623095 |
-| race | AfricanAmerican | admission | 3689 | 2512 | 444 | 0.120358 | 0.641525 | 0.229284 | 0.101497 | 0.351608 | 0.080390 | 704 | 2541 | 48 | 396 | 0.891892 | 0.216949 | 0.134831 | 0.936170 | 0.234250 | 0.420115 | 0.796151 |
-| race | AfricanAmerican | discharge | 3689 | 2512 | 444 | 0.120358 | 0.676088 | 0.254748 | 0.099976 | 0.344449 | 0.083103 | 1450 | 1795 | 98 | 346 | 0.779279 | 0.446841 | 0.161607 | 0.936693 | 0.267698 | 0.441665 | 0.580374 |
-| race | Other | admission | 321 | 249 | 45 | 0.140187 | 0.591948 | 0.242534 | 0.118453 | 0.404351 | 0.080390 | 160 | 116 | 21 | 24 | 0.533333 | 0.579710 | 0.171429 | 0.883978 | 0.259459 | 0.375000 | 0.436137 |
-| race | Other | discharge | 321 | 249 | 45 | 0.140187 | 0.637762 | 0.242293 | 0.118457 | 0.400648 | 0.083103 | 138 | 138 | 16 | 29 | 0.644444 | 0.500000 | 0.173653 | 0.896104 | 0.273585 | 0.417867 | 0.520249 |
-| race | Hispanic | admission | 408 | 300 | 41 | 0.100490 | 0.697382 | 0.288692 | 0.083981 | 0.300952 | 0.080390 | 96 | 271 | 6 | 35 | 0.853659 | 0.261580 | 0.114379 | 0.941176 | 0.201729 | 0.372340 | 0.750000 |
-| race | Hispanic | discharge | 408 | 300 | 41 | 0.100490 | 0.756629 | 0.308210 | 0.082752 | 0.290013 | 0.083103 | 195 | 172 | 5 | 36 | 0.878049 | 0.531335 | 0.173077 | 0.975000 | 0.289157 | 0.483871 | 0.509804 |
-
-#### threshold_metrics.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/threshold_metrics.csv)；4 列。
-
-| features | model | criterion | threshold | tn | fp | fn | tp | sensitivity | specificity | ppv | npv | f1 | f2 | alert_rate |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| admission | logistic | F1 | 0.120381 | 13501 | 4144 | 1325 | 972 | 0.423161 | 0.765146 | 0.189992 | 0.910630 | 0.262242 | 0.339765 | 0.256544 |
-| admission | logistic | F2 | 0.080390 | 3352 | 14293 | 248 | 2049 | 0.892033 | 0.189969 | 0.125382 | 0.931111 | 0.219862 | 0.401293 | 0.819476 |
-| discharge | hgb | F1 | 0.136106 | 13367 | 4278 | 1158 | 1139 | 0.495864 | 0.757552 | 0.210264 | 0.920275 | 0.295307 | 0.389935 | 0.271638 |
-| discharge | hgb | F2 | 0.083103 | 7375 | 10270 | 458 | 1839 | 0.800609 | 0.417965 | 0.151871 | 0.941529 | 0.255310 | 0.431751 | 0.607211 |
-
-#### thresholds_vs_paper.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/results/full/tables/thresholds_vs_paper.csv)；4 列。
-
-| features | model | criterion | threshold_reproduction | tn | fp | fn | tp | sensitivity_reproduction | specificity_reproduction | ppv_reproduction | npv | f1 | f2_reproduction | alert_rate_reproduction | threshold_paper | sensitivity_paper | specificity_paper | ppv_paper | f2_paper | alert_rate_paper |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| admission | logistic | F1 | 0.120381 | 13501 | 4144 | 1325 | 972 | 0.423161 | 0.765146 | 0.189992 | 0.910630 | 0.262242 | 0.339765 | 0.256544 | 0.120000 | 0.425000 | 0.766000 | 0.192000 | 0.342000 | 0.256000 |
-| admission | logistic | F2 | 0.080390 | 3352 | 14293 | 248 | 2049 | 0.892033 | 0.189969 | 0.125382 | 0.931111 | 0.219862 | 0.401293 | 0.819476 | 0.087000 | 0.844000 | 0.264000 | 0.130000 | 0.402000 | 0.748000 |
-| discharge | hgb | F1 | 0.136106 | 13367 | 4278 | 1158 | 1139 | 0.495864 | 0.757552 | 0.210264 | 0.920275 | 0.295307 | 0.389935 | 0.271638 | 0.135000 | 0.499000 | 0.754000 | 0.209000 | 0.391000 | 0.275000 |
-| discharge | hgb | F2 | 0.083103 | 7375 | 10270 | 458 | 1839 | 0.800609 | 0.417965 | 0.151871 | 0.941529 | 0.255310 | 0.431751 | 0.607211 | 0.084000 | 0.789000 | 0.422000 | 0.151000 | 0.428000 | 0.602000 |
-
-### 10.2 Bhuvan 的同切分五折 HGB 復現
-
-這組使用與本專題最新實驗完全相同的 99,343 筆與五折；以下保存其原始摘要和逐折表。
-
-#### fold_metrics.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/5-fold-reproduce/results/five_fold/baseline/fold_metrics.csv)；10 列。
-
-| Fold | method | train_encounters | test_encounters | test_patients | test_positives | encoded_features | test_ap | test_auroc | ap_delta_vs_bhuvan |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | bhuvan_hgb | 79474 | 19869 | 14043 | 2264 | 46 | 0.226461 | 0.675954 | 0.000000 |
-| 1 | roy_hgb_46 | 79474 | 19869 | 14043 | 2264 | 516 | 0.235894 | 0.679175 | 0.009433 |
-| 2 | bhuvan_hgb | 79474 | 19869 | 13953 | 2262 | 46 | 0.227787 | 0.662105 | 0.000000 |
-| 2 | roy_hgb_46 | 79474 | 19869 | 13953 | 2262 | 519 | 0.235216 | 0.666471 | 0.007430 |
-| 3 | bhuvan_hgb | 79475 | 19868 | 13973 | 2262 | 46 | 0.230301 | 0.675149 | 0.000000 |
-| 3 | roy_hgb_46 | 79475 | 19868 | 13973 | 2262 | 519 | 0.237472 | 0.679306 | 0.007171 |
-| 4 | bhuvan_hgb | 79474 | 19869 | 14028 | 2263 | 46 | 0.226049 | 0.669004 | 0.000000 |
-| 4 | roy_hgb_46 | 79474 | 19869 | 14028 | 2263 | 517 | 0.240225 | 0.677647 | 0.014176 |
-| 5 | bhuvan_hgb | 79475 | 19868 | 13993 | 2263 | 46 | 0.232919 | 0.676670 | 0.000000 |
-| 5 | roy_hgb_46 | 79475 | 19868 | 13993 | 2263 | 520 | 0.237498 | 0.682240 | 0.004580 |
-
-#### summary.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/5-fold-reproduce/results/five_fold/baseline/summary.csv)；2 列。
-
-| method | mean_ap | std_ap | mean_auroc | mean_ap_delta_vs_bhuvan | pooled_oof_ap |
-| --- | --- | --- | --- | --- | --- |
-| bhuvan_hgb | 0.228703 | 0.002883 | 0.671776 | 0.000000 | 0.227821 |
-| roy_hgb_46 | 0.237261 | 0.001932 | 0.676968 | 0.008558 | 0.235940 |
-
-#### 額外的 80/20 holdout 對照：test_metrics.csv
-
-此檔來自 Bhuvan 五折資料夾內另存的 80/20 測試，**不是**上述五折平均。
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/5-fold-reproduce/results/holdout/test_metrics.csv)；3 列。
-
-| method | test_ap | test_auroc | ap_delta_vs_bhuvan | ap_delta_ci95_low | ap_delta_ci95_high |
-| --- | --- | --- | --- | --- | --- |
-| bhuvan_hgb | 0.237372 | 0.679955 | 0.000000 | 0.000000 | 0.000000 |
-| roy_hgb_46 | 0.248551 | 0.681632 | 0.011179 | 0.001979 | 0.019171 |
-| roy_shared_clinical | 0.217896 | 0.664071 | -0.019476 | -0.030020 | -0.010698 |
-
-### 10.3 Bhuvan 的 80/20 CatBoost 擴充：46 欄
-
-這組使用 Rajpoot 復現的單次 80/20 測試；development trials／metrics 是開發側，test metrics 才是測試側。
-
-#### development_metrics.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/46_fields/development_metrics.csv)；3 列。 **開發／驗證資料，不是測試集成績。**
-
-| method | auroc | ap | brier | log_loss | calibration_intercept | calibration_slope |
-| --- | --- | --- | --- | --- | --- | --- |
-| catboost | 0.672384 | 0.235138 | 0.095461 | 0.332535 | 0.125221 | 1.059145 |
-| blend | 0.672583 | 0.233013 | 0.095561 | 0.332622 | 0.161244 | 1.079001 |
-| hgb | 0.666130 | 0.220926 | 0.096159 | 0.334636 | -0.006514 | 0.993158 |
-
-#### development_trials.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/46_fields/development_trials.csv)；6 列。 **開發／驗證資料，不是測試集成績。**
-
-| depth | trees | auroc | ap | brier | log_loss | fold_1_ap | fold_2_ap | fold_3_ap |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 6 | 750 | 0.672384 | 0.235138 | 0.095461 | 0.332535 | 0.221398 | 0.240323 | 0.245378 |
-| 4 | 750 | 0.671675 | 0.233633 | 0.095547 | 0.332836 | 0.220013 | 0.237921 | 0.244091 |
-| 6 | 500 | 0.671175 | 0.232819 | 0.095603 | 0.333038 | 0.220631 | 0.236389 | 0.243918 |
-| 4 | 500 | 0.670511 | 0.231522 | 0.095677 | 0.333313 | 0.218794 | 0.235085 | 0.242376 |
-| 6 | 250 | 0.668712 | 0.228761 | 0.095862 | 0.333997 | 0.217659 | 0.232029 | 0.239640 |
-| 4 | 250 | 0.667604 | 0.226989 | 0.095979 | 0.334467 | 0.215281 | 0.229555 | 0.238986 |
-
-#### paired_differences.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/46_fields/paired_differences.csv)；18 列。
-
-| contrast | treatment | control | metric | difference | ci_lower | ci_upper | repetitions | seed |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| primary | blend | hgb | ap | 0.012070 | 0.006854 | 0.016798 | 1000 | 2028 |
-| primary | blend | hgb | brier | -0.000585 | -0.000783 | -0.000381 | 1000 | 2028 |
-| catboost_vs_hgb | catboost | hgb | ap | 0.014011 | 0.005947 | 0.022333 | 1000 | 2028 |
-| catboost_vs_hgb | catboost | hgb | brier | -0.000685 | -0.001059 | -0.000299 | 1000 | 2028 |
-| blend_vs_catboost | blend | catboost | ap | -0.001941 | -0.005774 | 0.001625 | 1000 | 2028 |
-| blend_vs_catboost | blend | catboost | brier | 0.000100 | -0.000090 | 0.000279 | 1000 | 2028 |
-| raw_codes_vs_groups | blend_raw_icd9 | blend | ap | 0.001002 | -0.001671 | 0.003691 | 1000 | 2028 |
-| raw_codes_vs_groups | blend_raw_icd9 | blend | brier | -0.000093 | -0.000207 | 0.000023 | 1000 | 2028 |
-| catboost_raw_vs_grouped | catboost_raw_icd9 | catboost | ap | 0.001380 | -0.003050 | 0.005875 | 1000 | 2028 |
-| catboost_raw_vs_grouped | catboost_raw_icd9 | catboost | brier | -0.000144 | -0.000370 | 0.000086 | 1000 | 2028 |
-| blend_raw_vs_hgb | blend_raw_icd9 | hgb | ap | 0.013073 | 0.008517 | 0.017815 | 1000 | 2028 |
-| blend_raw_vs_hgb | blend_raw_icd9 | hgb | brier | -0.000678 | -0.000872 | -0.000483 | 1000 | 2028 |
-| calibration | hgb_platt | hgb | ap | 0.000000 | 0.000000 | 0.000000 | 1000 | 2028 |
-| calibration | hgb_platt | hgb | brier | 0.000002 | -0.000004 | 0.000008 | 1000 | 2028 |
-| calibration | catboost_platt | catboost | ap | 0.000000 | 0.000000 | 0.000000 | 1000 | 2028 |
-| calibration | catboost_platt | catboost | brier | -0.000063 | -0.000130 | 0.000004 | 1000 | 2028 |
-| calibration | blend_platt | blend | ap | 0.000000 | 0.000000 | 0.000000 | 1000 | 2028 |
-| calibration | blend_platt | blend | brier | -0.000103 | -0.000189 | -0.000020 | 1000 | 2028 |
-
-#### test_metrics.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/46_fields/test_metrics.csv)；8 列。
-
-| method | auroc | ap | brier | log_loss | calibration_intercept | calibration_slope |
-| --- | --- | --- | --- | --- | --- | --- |
-| hgb | 0.679955 | 0.237372 | 0.096505 | 0.334749 | 0.147856 | 1.069105 |
-| catboost | 0.682810 | 0.251383 | 0.095820 | 0.332847 | 0.216503 | 1.097910 |
-| blend | 0.684490 | 0.249442 | 0.095920 | 0.332939 | 0.272047 | 1.130490 |
-| catboost_raw_icd9 | 0.687366 | 0.252763 | 0.095676 | 0.331983 | 0.238419 | 1.107532 |
-| blend_raw_icd9 | 0.688338 | 0.250444 | 0.095827 | 0.332302 | 0.304890 | 1.146707 |
-| hgb_platt | 0.679955 | 0.237372 | 0.096507 | 0.334760 | 0.154868 | 1.076470 |
-| catboost_platt | 0.682810 | 0.251383 | 0.095756 | 0.332663 | 0.086699 | 1.036600 |
-| blend_platt | 0.684490 | 0.249442 | 0.095817 | 0.332652 | 0.103108 | 1.047718 |
-
-### 10.4 Bhuvan 的 80/20 CatBoost 擴充：85／88 欄
-
-擴充臨床及就醫特徵的 HGB、CatBoost 與融合；仍是原 80/20 測試，不能與最新五折 AP 均值混排。
-
-#### development_trials.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/expanded/development_trials.csv)；15 列。 **開發／驗證資料，不是測試集成績。**
-
-| fold | family | candidate | trees | AP |
-| --- | --- | --- | --- | --- |
-| 0 | hgb | 100 | 100 | 0.220990 |
-| 0 | hgb | 200 | 200 | 0.219378 |
-| 0 | hgb | 300 | 300 | 0.218004 |
-| 0 | catboost | 0 | 744 | 0.221747 |
-| 0 | catboost | 1 | 715 | 0.222404 |
-| 1 | hgb | 100 | 100 | 0.235558 |
-| 1 | hgb | 200 | 200 | 0.234007 |
-| 1 | hgb | 300 | 300 | 0.228663 |
-| 1 | catboost | 0 | 644 | 0.226741 |
-| 1 | catboost | 1 | 439 | 0.229180 |
-| 2 | hgb | 100 | 100 | 0.238373 |
-| 2 | hgb | 200 | 200 | 0.234784 |
-| 2 | hgb | 300 | 300 | 0.232515 |
-| 2 | catboost | 0 | 275 | 0.235217 |
-| 2 | catboost | 1 | 290 | 0.238874 |
-
-#### paired_ap.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/expanded/paired_ap.csv)；3 列。
-
-| treatment | control | AP_difference | CI95_low | CI95_high | patient_bootstrap_repetitions | seed |
-| --- | --- | --- | --- | --- | --- | --- |
-| blend_50_50 | paper_hgb | 0.013823 | 0.007050 | 0.020921 | 1000 | 2028 |
-| blend_50_50 | native_hgb | 0.006841 | 0.003335 | 0.010377 | 1000 | 2028 |
-| blend_50_50 | catboost | 0.001221 | -0.001838 | 0.004295 | 1000 | 2028 |
-
-#### test_metrics.csv
-
-來源：[原始 CSV](../Bhuvan_Rajpoot_SSRN/hgb_catboost/reference/expanded/test_metrics.csv)；4 列。
-
-| method | auroc | ap | brier | log_loss |
-| --- | --- | --- | --- | --- |
-| paper_hgb | 0.679955 | 0.237372 | 0.096505 | 0.334749 |
-| native_hgb | 0.683671 | 0.244354 | 0.096113 | 0.333279 |
-| catboost | 0.682443 | 0.249974 | 0.095904 | 0.332956 |
-| blend_50_50 | 0.686590 | 0.251195 | 0.095826 | 0.332379 |
-
-### 10.5 本地 Salim 命名資料夾的 80/20 指標與 SHAP 延伸
-
-本資料夾不是 Salim 原論文的獨立五折重跑；下列是 Rajpoot 80/20 復現模型的完整指標、校準、子群體、SHAP 與控制分析。
-
-#### calibration_deciles.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/calibration_deciles.csv)；30 列。
-
-| decile | encounters | mean_predicted | observed_rate | positives | observed_minus_predicted | method |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | 1995 | 0.040578 | 0.048120 | 96 | 0.007543 | hgb |
-| 2 | 1994 | 0.056754 | 0.051153 | 102 | -0.005600 | hgb |
-| 3 | 1994 | 0.067845 | 0.065196 | 130 | -0.002649 | hgb |
-| 4 | 1994 | 0.078526 | 0.069208 | 138 | -0.009319 | hgb |
-| 5 | 1994 | 0.090235 | 0.082748 | 165 | -0.007487 | hgb |
-| 6 | 1994 | 0.105081 | 0.102808 | 205 | -0.002273 | hgb |
-| 7 | 1994 | 0.121894 | 0.128385 | 256 | 0.006491 | hgb |
-| 8 | 1994 | 0.140890 | 0.127382 | 254 | -0.013508 | hgb |
-| 9 | 1994 | 0.169683 | 0.193581 | 386 | 0.023898 | hgb |
-| 10 | 1995 | 0.265320 | 0.283208 | 565 | 0.017888 | hgb |
-| 1 | 1995 | 0.046910 | 0.046617 | 93 | -0.000293 | catboost |
-| 2 | 1994 | 0.059769 | 0.054162 | 108 | -0.005607 | catboost |
-| 3 | 1994 | 0.068475 | 0.061184 | 122 | -0.007291 | catboost |
-| 4 | 1994 | 0.077136 | 0.079739 | 159 | 0.002604 | catboost |
-| 5 | 1994 | 0.087580 | 0.089268 | 178 | 0.001688 | catboost |
-| 6 | 1994 | 0.100171 | 0.093781 | 187 | -0.006389 | catboost |
-| 7 | 1994 | 0.114255 | 0.107823 | 215 | -0.006431 | catboost |
-| 8 | 1994 | 0.133358 | 0.138917 | 277 | 0.005559 | catboost |
-| 9 | 1994 | 0.164942 | 0.181043 | 361 | 0.016101 | catboost |
-| 10 | 1995 | 0.273341 | 0.299248 | 597 | 0.025907 | catboost |
-| 1 | 1995 | 0.044630 | 0.046617 | 93 | 0.001987 | catboost_platt |
-| 2 | 1994 | 0.057686 | 0.054162 | 108 | -0.003523 | catboost_platt |
-| 3 | 1994 | 0.066640 | 0.061184 | 122 | -0.005456 | catboost_platt |
-| 4 | 1994 | 0.075617 | 0.079739 | 159 | 0.004123 | catboost_platt |
-| 5 | 1994 | 0.086520 | 0.089268 | 178 | 0.002748 | catboost_platt |
-| 6 | 1994 | 0.099759 | 0.093781 | 187 | -0.005978 | catboost_platt |
-| 7 | 1994 | 0.114674 | 0.107823 | 215 | -0.006851 | catboost_platt |
-| 8 | 1994 | 0.135054 | 0.138917 | 277 | 0.003863 | catboost_platt |
-| 9 | 1994 | 0.169035 | 0.181043 | 361 | 0.012008 | catboost_platt |
-| 10 | 1995 | 0.286443 | 0.299248 | 597 | 0.012805 | catboost_platt |
-
-#### literature_comparison.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/literature_comparison.csv)；6 列。
-
-| study | split | auroc | ap | positive_f1 | brier | note |
-| --- | --- | --- | --- | --- | --- | --- |
-| Liu, Sue & Wu 2024 [7] | patient-grouped 5-fold CV | 0.640000 | — | — | — | published F1 0.84 is not positive-class F1 |
-| Emi-Johnson & Nkrumah 2025 [8] | stratified 80/20 encounters | 0.667000 | — | 0.032000 | — | XGBoost; DNN reached F1 0.161 at AUROC 0.579 |
-| Salim & Ibrahim 2026 [9] | nested CV, not patient-disjoint | 0.664000 | 0.215000 | 0.271000 | — | XGBoost |
-| Rajpoot 2026 [10] (published) | patient-disjoint 80/20 | 0.677000 | 0.237000 | — | — | HGB, discharge-time fields |
-| Ours: reproduced HGB | same patient-disjoint 80/20 | 0.679955 | 0.237372 | 0.295307 | 0.096505 | F1 at development-selected threshold |
-| Ours: 46-field CatBoost | same patient-disjoint 80/20 | 0.682810 | 0.251383 | 0.303888 | 0.095820 | F1 at development-selected threshold |
-
-#### metrics_46_fields.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/metrics_46_fields.csv)；7 列。
-
-| method | ap | auroc | brier | scaled_brier | log_loss | calibration_intercept | calibration_slope | mean_predicted | observed_rate | ece_deciles | ap_ci_low | ap_ci_high | auroc_ci_low | auroc_ci_high | brier_ci_low | brier_ci_high | matches_team_reference_ap | precision_at_recall_20 | precision_at_recall_40 | precision_at_recall_60 | precision_at_recall_80 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| hgb | 0.237372 | 0.679955 | 0.096505 | 0.053101 | 0.334749 | 0.147856 | 1.069105 | 0.113684 | 0.115184 | 0.009666 | 0.216253 | 0.259751 | 0.666540 | 0.692873 | 0.092933 | 0.100188 | True | 0.302831 | 0.241397 | 0.188775 | 0.152266 |
-| catboost | 0.251383 | 0.682810 | 0.095820 | 0.059825 | 0.332847 | 0.216503 | 1.097910 | 0.112598 | 0.115184 | 0.007788 | 0.230377 | 0.273457 | 0.669943 | 0.696494 | 0.092356 | 0.099460 | True | 0.330935 | 0.244610 | 0.187798 | 0.150755 |
-| blend | 0.249442 | 0.684490 | 0.095920 | 0.058841 | 0.332939 | 0.272047 | 1.130490 | 0.113141 | 0.115184 | 0.008688 | 0.227578 | 0.271149 | 0.671217 | 0.697897 | 0.092352 | 0.099614 | True | 0.327869 | 0.243444 | 0.193354 | 0.153949 |
-| catboost_raw_icd9 | 0.252763 | 0.687366 | 0.095676 | 0.061237 | 0.331983 | 0.238419 | 1.107532 | 0.112227 | 0.115184 | 0.007375 | 0.232181 | 0.273340 | 0.674604 | 0.700670 | 0.092105 | 0.099292 | True | 0.341500 | 0.247309 | 0.193761 | 0.154870 |
-| hgb_platt | 0.237372 | 0.679955 | 0.096507 | 0.053083 | 0.334760 | 0.154868 | 1.076470 | 0.114325 | 0.115184 | 0.009905 | 0.216253 | 0.259751 | 0.666540 | 0.692873 | 0.092938 | 0.100185 | True | 0.302831 | 0.241397 | 0.188775 | 0.152266 |
-| catboost_platt | 0.251383 | 0.682810 | 0.095756 | 0.060446 | 0.332663 | 0.086699 | 1.036600 | 0.113611 | 0.115184 | 0.005934 | 0.230377 | 0.273457 | 0.669943 | 0.696494 | 0.092303 | 0.099365 | True | 0.330935 | 0.244610 | 0.187798 | 0.150755 |
-| blend_platt | 0.249442 | 0.684490 | 0.095817 | 0.059853 | 0.332652 | 0.103108 | 1.047718 | 0.114010 | 0.115184 | 0.006042 | 0.227578 | 0.271149 | 0.671217 | 0.697897 | 0.092338 | 0.099470 | True | 0.327869 | 0.243444 | 0.193354 | 0.153949 |
-
-#### metrics_rq1_cdc.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/metrics_rq1_cdc.csv)；12 列。
-
-| method | ap | auroc | brier | scaled_brier | log_loss | calibration_intercept | calibration_slope | mean_predicted | observed_rate | ece_deciles | ap_ci_low | ap_ci_high | auroc_ci_low | auroc_ci_high | brier_ci_low | brier_ci_high | dev_ap | deck_test_ap | deck_top10_tp |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| original | 0.237372 | 0.679955 | 0.096505 | 0.053101 | 0.334749 | 0.147856 | 1.069105 | 0.113684 | 0.115184 | 0.009666 | 0.216253 | 0.259751 | 0.666540 | 0.692873 | 0.092933 | 0.100188 | 0.220926 | 0.237370 | 565.000000 |
-| balanced | 0.234575 | 0.676117 | 0.214580 | -1.105450 | 0.618301 | -1.965100 | 1.037501 | 0.447916 | 0.115184 | 0.332732 | 0.212622 | 0.258772 | 0.662800 | 0.689646 | 0.212301 | 0.216803 | 0.212957 | 0.234580 | 580.000000 |
-| duplicate_1to1 | 0.228689 | 0.675114 | 0.213829 | -1.098080 | 0.616718 | -1.956372 | 1.025077 | 0.446423 | 0.115184 | 0.331239 | 0.208711 | 0.249545 | 0.662005 | 0.688645 | 0.211582 | 0.216055 | 0.212827 | 0.232410 | 556.000000 |
-| smotenc_1to1 | 0.198233 | 0.652045 | 0.100717 | 0.011776 | 0.347760 | -0.663962 | 0.767069 | 0.145286 | 0.115184 | 0.030558 | 0.180141 | 0.217747 | 0.637834 | 0.665450 | 0.097477 | 0.104047 | 0.187834 | 0.209000 | 501.000000 |
-| agesex_control | 0.238845 | 0.677627 | 0.096525 | 0.052902 | 0.335098 | 0.135376 | 1.062394 | 0.113656 | 0.115184 | 0.009188 | 0.217391 | 0.262779 | 0.664054 | 0.690917 | 0.093040 | 0.100268 | 0.219559 | 0.239450 | — |
-| agesex_cdc | 0.240311 | 0.678351 | 0.096426 | 0.053878 | 0.334727 | 0.157815 | 1.074416 | 0.113705 | 0.115184 | 0.007732 | 0.218808 | 0.263428 | 0.664828 | 0.691937 | 0.092936 | 0.100158 | 0.217799 | 0.239270 | — |
-| original_platt | 0.237372 | 0.679955 | 0.096506 | 0.053085 | 0.334759 | 0.154549 | 1.076334 | 0.114330 | 0.115184 | 0.009901 | 0.216253 | 0.259751 | 0.666540 | 0.692873 | 0.092938 | 0.100185 | 0.220926 | — | — |
-| balanced_platt | 0.234575 | 0.676117 | 0.096837 | 0.049844 | 0.336056 | 0.165400 | 1.096280 | 0.116778 | 0.115184 | 0.011326 | 0.212622 | 0.258772 | 0.662800 | 0.689646 | 0.093317 | 0.100572 | 0.212957 | — | — |
-| duplicate_1to1_platt | 0.228689 | 0.675114 | 0.097046 | 0.047790 | 0.336741 | 0.135770 | 1.081808 | 0.117005 | 0.115184 | 0.009793 | 0.208711 | 0.249545 | 0.662005 | 0.688645 | 0.093517 | 0.100834 | 0.212827 | — | — |
-| smotenc_1to1_platt | 0.198233 | 0.652045 | 0.098630 | 0.032251 | 0.342279 | 0.112684 | 1.053504 | 0.114369 | 0.115184 | 0.006564 | 0.180141 | 0.217747 | 0.637834 | 0.665450 | 0.095007 | 0.102543 | 0.187834 | — | — |
-| agesex_control_platt | 0.238845 | 0.677627 | 0.096537 | 0.052784 | 0.335132 | 0.160412 | 1.079430 | 0.114348 | 0.115184 | 0.009703 | 0.217391 | 0.262779 | 0.664054 | 0.690917 | 0.093055 | 0.100274 | 0.219559 | — | — |
-| agesex_cdc_platt | 0.240311 | 0.678351 | 0.096437 | 0.053762 | 0.334765 | 0.180207 | 1.091086 | 0.114563 | 0.115184 | 0.008259 | 0.218808 | 0.263428 | 0.664828 | 0.691937 | 0.092957 | 0.100165 | 0.217799 | — | — |
-
-#### operating_points_46_fields.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/operating_points_46_fields.csv)；10 列。
-
-| method | rule | threshold | alerts | alert_rate | tp | fp | fn | tn | precision | recall | specificity | npv | f1 | f2 | balanced_accuracy | accuracy |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| hgb | top 10% capacity | 0.192074 | 1994 | 0.099990 | 565 | 1429 | 1732 | 16216 | 0.283350 | 0.245973 | 0.919014 | 0.903499 | 0.263342 | 0.252638 | 0.582493 | 0.841490 |
-| hgb | dev-F1 threshold | 0.136106 | 5417 | 0.271638 | 1139 | 4278 | 1158 | 13367 | 0.210264 | 0.495864 | 0.757552 | 0.920275 | 0.295307 | 0.389935 | 0.626708 | 0.727409 |
-| hgb | dev-F2 threshold | 0.083103 | 12109 | 0.607211 | 1839 | 10270 | 458 | 7375 | 0.151871 | 0.800609 | 0.417965 | 0.941529 | 0.255310 | 0.431751 | 0.609287 | 0.462040 |
-| catboost | top 10% capacity | 0.189220 | 1994 | 0.099990 | 596 | 1398 | 1701 | 16247 | 0.298897 | 0.259469 | 0.920771 | 0.905226 | 0.277791 | 0.266500 | 0.590120 | 0.844599 |
-| catboost | dev-F1 threshold | 0.129848 | 5265 | 0.264016 | 1149 | 4116 | 1148 | 13529 | 0.218234 | 0.500218 | 0.766733 | 0.921782 | 0.303888 | 0.397495 | 0.633475 | 0.736035 |
-| catboost | dev-F2 threshold | 0.080210 | 12304 | 0.616989 | 1843 | 10461 | 454 | 7184 | 0.149789 | 0.802351 | 0.407141 | 0.940560 | 0.252448 | 0.428764 | 0.604746 | 0.452663 |
-| blend | top 10% capacity | 0.190459 | 1994 | 0.099990 | 578 | 1416 | 1719 | 16229 | 0.289870 | 0.251633 | 0.919751 | 0.904223 | 0.269401 | 0.258451 | 0.585692 | 0.842794 |
-| blend | dev-F1 threshold | 0.144926 | 4274 | 0.214322 | 999 | 3275 | 1298 | 14370 | 0.233739 | 0.434915 | 0.814395 | 0.917156 | 0.304063 | 0.371044 | 0.624655 | 0.770685 |
-| blend | dev-F2 threshold | 0.079377 | 12707 | 0.637198 | 1882 | 10825 | 415 | 6820 | 0.148107 | 0.819330 | 0.386512 | 0.942640 | 0.250866 | 0.429778 | 0.602921 | 0.436365 |
-| catboost_raw_icd9 | top 10% capacity | 0.191663 | 1994 | 0.099990 | 604 | 1390 | 1693 | 16255 | 0.302909 | 0.262952 | 0.921224 | 0.905672 | 0.281519 | 0.270077 | 0.592088 | 0.845402 |
-
-#### operating_points_rq1_cdc.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/operating_points_rq1_cdc.csv)；18 列。
-
-| method | rule | threshold | alerts | alert_rate | tp | fp | fn | tn | precision | recall | specificity | npv | f1 | f2 | balanced_accuracy | accuracy |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| original | top 10% capacity | 0.192074 | 1994 | 0.099990 | 565 | 1429 | 1732 | 16216 | 0.283350 | 0.245973 | 0.919014 | 0.903499 | 0.263342 | 0.252638 | 0.582493 | 0.841490 |
-| original | dev-F1 threshold | 0.136106 | 5417 | 0.271638 | 1139 | 4278 | 1158 | 13367 | 0.210264 | 0.495864 | 0.757552 | 0.920275 | 0.295307 | 0.389935 | 0.626708 | 0.727409 |
-| original | dev-F2 threshold | 0.083103 | 12109 | 0.607211 | 1839 | 10270 | 458 | 7375 | 0.151871 | 0.800609 | 0.417965 | 0.941529 | 0.255310 | 0.431751 | 0.609287 | 0.462040 |
-| balanced | top 10% capacity | 0.635340 | 1994 | 0.099990 | 580 | 1414 | 1717 | 16231 | 0.290873 | 0.252503 | 0.919864 | 0.904335 | 0.270333 | 0.259345 | 0.586184 | 0.842995 |
-| balanced | dev-F1 threshold | 0.537721 | 5611 | 0.281366 | 1143 | 4468 | 1154 | 13177 | 0.203707 | 0.497606 | 0.746784 | 0.919475 | 0.289074 | 0.386175 | 0.622195 | 0.718082 |
-| balanced | dev-F2 threshold | 0.400670 | 12074 | 0.605456 | 1827 | 10247 | 470 | 7398 | 0.151317 | 0.795385 | 0.419269 | 0.940264 | 0.254262 | 0.429640 | 0.607327 | 0.462592 |
-| duplicate_1to1 | top 10% capacity | 0.635378 | 1994 | 0.099990 | 558 | 1436 | 1739 | 16209 | 0.279840 | 0.242926 | 0.918617 | 0.903109 | 0.260079 | 0.249508 | 0.580771 | 0.840788 |
-| duplicate_1to1 | dev-F1 threshold | 0.539094 | 5506 | 0.276101 | 1120 | 4386 | 1177 | 13259 | 0.203414 | 0.487593 | 0.751431 | 0.918468 | 0.287069 | 0.381108 | 0.619512 | 0.721041 |
-| duplicate_1to1 | dev-F2 threshold | 0.389241 | 12556 | 0.629626 | 1873 | 10683 | 424 | 6962 | 0.149172 | 0.815411 | 0.394559 | 0.942594 | 0.252205 | 0.430694 | 0.604985 | 0.443035 |
-| smotenc_1to1 | top 10% capacity | 0.256971 | 1994 | 0.099990 | 471 | 1523 | 1826 | 16122 | 0.236209 | 0.205050 | 0.913687 | 0.898262 | 0.219529 | 0.210606 | 0.559368 | 0.832063 |
-| smotenc_1to1 | dev-F1 threshold | 0.146690 | 7440 | 0.373082 | 1304 | 6136 | 993 | 11509 | 0.175269 | 0.567697 | 0.652253 | 0.920573 | 0.267844 | 0.392110 | 0.609975 | 0.642513 |
-| smotenc_1to1 | dev-F2 threshold | 0.083567 | 14621 | 0.733176 | 1991 | 12630 | 306 | 5015 | 0.136174 | 0.866783 | 0.284216 | 0.942492 | 0.235371 | 0.418119 | 0.575500 | 0.351319 |
-| agesex_control | top 10% capacity | 0.192071 | 1994 | 0.099990 | 571 | 1423 | 1726 | 16222 | 0.286359 | 0.248585 | 0.919354 | 0.903833 | 0.266138 | 0.255321 | 0.583970 | 0.842092 |
-| agesex_control | dev-F1 threshold | 0.135112 | 5510 | 0.276301 | 1137 | 4373 | 1160 | 13272 | 0.206352 | 0.494993 | 0.752168 | 0.919623 | 0.291277 | 0.386787 | 0.623581 | 0.722545 |
-| agesex_control | dev-F2 threshold | 0.080237 | 12645 | 0.634089 | 1879 | 10766 | 418 | 6879 | 0.148596 | 0.818024 | 0.389855 | 0.942716 | 0.251506 | 0.430312 | 0.603939 | 0.439174 |
-| agesex_cdc | top 10% capacity | 0.192618 | 1994 | 0.099990 | 564 | 1430 | 1733 | 16215 | 0.282849 | 0.245538 | 0.918957 | 0.903443 | 0.262876 | 0.252191 | 0.582247 | 0.841390 |
-| agesex_cdc | dev-F1 threshold | 0.143082 | 4739 | 0.237639 | 1048 | 3691 | 1249 | 13954 | 0.221144 | 0.456247 | 0.790819 | 0.917845 | 0.297897 | 0.376248 | 0.623533 | 0.752282 |
-| agesex_cdc | dev-F2 threshold | 0.083427 | 12104 | 0.606960 | 1831 | 10273 | 466 | 7372 | 0.151272 | 0.797127 | 0.417795 | 0.940546 | 0.254288 | 0.429974 | 0.607461 | 0.461488 |
-
-#### paired_differences.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/paired_differences.csv)；42 列。
-
-| family | treatment | control | metric | difference | ci_low | ci_high | ci_excludes_zero |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 46_fields | catboost | hgb | ap | 0.014011 | 0.005947 | 0.022333 | True |
-| 46_fields | catboost | hgb | auroc | 0.002855 | -0.001643 | 0.007215 | False |
-| 46_fields | catboost | hgb | brier | -0.000685 | -0.001059 | -0.000299 | True |
-| 46_fields | blend | hgb | ap | 0.012070 | 0.006854 | 0.016798 | True |
-| 46_fields | blend | hgb | auroc | 0.004534 | 0.002234 | 0.006707 | True |
-| 46_fields | blend | hgb | brier | -0.000585 | -0.000783 | -0.000381 | True |
-| 46_fields | blend | catboost | ap | -0.001941 | -0.005774 | 0.001625 | False |
-| 46_fields | blend | catboost | auroc | 0.001679 | -0.000529 | 0.004076 | False |
-| 46_fields | blend | catboost | brier | 0.000100 | -0.000090 | 0.000279 | False |
-| 46_fields | catboost_raw_icd9 | catboost | ap | 0.001380 | -0.003050 | 0.005875 | False |
-| 46_fields | catboost_raw_icd9 | catboost | auroc | 0.004556 | 0.000813 | 0.008202 | True |
-| 46_fields | catboost_raw_icd9 | catboost | brier | -0.000144 | -0.000370 | 0.000086 | False |
-| 46_fields | catboost_platt | catboost | ap | 0.000000 | 0.000000 | 0.000000 | False |
-| 46_fields | catboost_platt | catboost | auroc | 0.000000 | 0.000000 | 0.000000 | False |
-| 46_fields | catboost_platt | catboost | brier | -0.000063 | -0.000130 | 0.000004 | False |
-| rq1_cdc_rerun | balanced | original | ap | -0.002796 | -0.008451 | 0.002723 | False |
-| rq1_cdc_rerun | balanced | original | auroc | -0.003839 | -0.007192 | -0.000439 | True |
-| rq1_cdc_rerun | balanced | original | brier | 0.118076 | 0.114664 | 0.121389 | True |
-| rq1_cdc_rerun | duplicate_1to1 | original | ap | -0.008682 | -0.013695 | -0.003292 | True |
-| rq1_cdc_rerun | duplicate_1to1 | original | auroc | -0.004841 | -0.009053 | -0.000853 | True |
-| rq1_cdc_rerun | duplicate_1to1 | original | brier | 0.117325 | 0.113961 | 0.120706 | True |
-| rq1_cdc_rerun | smotenc_1to1 | original | ap | -0.039138 | -0.049767 | -0.029253 | True |
-| rq1_cdc_rerun | smotenc_1to1 | original | auroc | -0.027911 | -0.036751 | -0.019790 | True |
-| rq1_cdc_rerun | smotenc_1to1 | original | brier | 0.004212 | 0.003494 | 0.004949 | True |
-| rq1_cdc_rerun | duplicate_1to1 | smotenc_1to1 | ap | 0.030456 | 0.020208 | 0.040842 | True |
-| rq1_cdc_rerun | duplicate_1to1 | smotenc_1to1 | auroc | 0.023069 | 0.015715 | 0.031282 | True |
-| rq1_cdc_rerun | duplicate_1to1 | smotenc_1to1 | brier | 0.113113 | 0.109916 | 0.116227 | True |
-| rq1_cdc_rerun | agesex_control | original | ap | 0.001473 | -0.001981 | 0.005154 | False |
-| rq1_cdc_rerun | agesex_control | original | auroc | -0.002328 | -0.004261 | -0.000383 | True |
-| rq1_cdc_rerun | agesex_control | original | brier | 0.000020 | -0.000120 | 0.000159 | False |
-| rq1_cdc_rerun | agesex_cdc | agesex_control | ap | 0.001467 | -0.002419 | 0.005585 | False |
-| rq1_cdc_rerun | agesex_cdc | agesex_control | auroc | 0.000723 | -0.001794 | 0.003191 | False |
-| rq1_cdc_rerun | agesex_cdc | agesex_control | brier | -0.000099 | -0.000262 | 0.000050 | False |
-| rq1_cdc_rerun | balanced_platt | original | ap | -0.002796 | -0.008451 | 0.002723 | False |
-| rq1_cdc_rerun | balanced_platt | original | auroc | -0.003839 | -0.007192 | -0.000439 | True |
-| rq1_cdc_rerun | balanced_platt | original | brier | 0.000332 | 0.000121 | 0.000566 | True |
-| rq1_cdc_rerun | duplicate_1to1_platt | original | ap | -0.008682 | -0.013695 | -0.003292 | True |
-| rq1_cdc_rerun | duplicate_1to1_platt | original | auroc | -0.004841 | -0.009053 | -0.000853 | True |
-| rq1_cdc_rerun | duplicate_1to1_platt | original | brier | 0.000541 | 0.000286 | 0.000811 | True |
-| rq1_cdc_rerun | smotenc_1to1_platt | original | ap | -0.039138 | -0.049767 | -0.029253 | True |
-| rq1_cdc_rerun | smotenc_1to1_platt | original | auroc | -0.027911 | -0.036751 | -0.019790 | True |
-| rq1_cdc_rerun | smotenc_1to1_platt | original | brier | 0.002125 | 0.001621 | 0.002691 | True |
-
-#### precision_at_recall.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/precision_at_recall.csv)；2 列。
-
-| method | precision_at_recall_20 | precision_at_recall_40 | precision_at_recall_60 | precision_at_recall_80 |
-| --- | --- | --- | --- | --- |
-| hgb | 0.302831 | 0.241397 | 0.188775 | 0.152266 |
-| catboost | 0.330935 | 0.244610 | 0.187798 | 0.150755 |
-
-#### shap_attribution_check.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_attribution_check.csv)；46 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| rank | feature | label | mean_abs_shap_pp | own_value_r2 | no_combo_mean_abs_shap_pp | no_combo_rank | flag_borrowed_attribution |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | number_inpatient | Prior inpatient visits | 2.800801 | 0.988438 | 2.835352 | 1 | False |
-| 2 | discharge_disposition_id | Discharge disposition | 1.499776 | 0.763865 | 2.029850 | 2 | False |
-| 3 | payer_code | Payer code | 0.491347 | 0.652717 | 0.531799 | 3 | False |
-| 4 | diag_1 | Primary diagnosis | 0.451796 | 0.251565 | 0.463501 | 4 | False |
-| 5 | number_diagnoses | Number of diagnoses | 0.419977 | 0.879099 | 0.456243 | 5 | False |
-| 6 | number_emergency | Prior emergency visits | 0.395237 | 0.931917 | 0.374628 | 7 | False |
-| 7 | insulin | Insulin | 0.379698 | 0.929231 | 0.421410 | 6 | False |
-| 8 | time_in_hospital | Length of stay (days) | 0.282082 | 0.813625 | 0.361982 | 8 | False |
-| 9 | age | Age | 0.262236 | 0.798837 | 0.343180 | 9 | False |
-| 10 | medical_specialty | Medical specialty | 0.256110 | 0.523738 | 0.299458 | 10 | False |
-| 11 | chlorpropamide | chlorpropamide | 0.199685 | 0.000626 | 0.000163 | 39 | True |
-| 12 | num_medications | Number of medications | 0.196159 | 0.687175 | 0.246550 | 13 | False |
-| 13 | metformin | Metformin | 0.192693 | 0.868528 | 0.274979 | 11 | False |
-| 14 | diag_3 | Tertiary diagnosis | 0.188348 | 0.799321 | 0.205227 | 14 | False |
-| 15 | diag_2 | Secondary diagnosis | 0.179631 | 0.471171 | 0.148840 | 17 | False |
-| 16 | diabetesMed | Any diabetes medication | 0.178719 | 0.948929 | 0.251839 | 12 | False |
-| 17 | num_lab_procedures | Lab procedures | 0.127121 | 0.458038 | 0.180802 | 15 | False |
-| 18 | A1Cresult | HbA1c result | 0.123050 | 0.885921 | 0.149840 | 16 | False |
-| 19 | admission_source_id | Admission source | 0.118598 | 0.444516 | 0.130540 | 18 | False |
-| 20 | admission_type_id | Admission type | 0.101268 | 0.070624 | 0.096869 | 22 | False |
-| 21 | num_procedures | Procedures | 0.075506 | 0.219361 | 0.130484 | 19 | False |
-| 22 | gender | Sex | 0.072436 | 0.789094 | 0.113863 | 21 | False |
-| 23 | number_outpatient | Prior outpatient visits | 0.059881 | 0.834095 | 0.087468 | 23 | False |
-| 24 | race | Race | 0.059836 | 0.595661 | 0.114749 | 20 | False |
-| 25 | change | Medication change | 0.053348 | 0.909257 | 0.074508 | 24 | False |
-| 26 | glyburide | glyburide | 0.038024 | 0.179614 | 0.039986 | 26 | False |
-| 27 | glipizide | glipizide | 0.037463 | 0.703079 | 0.050753 | 25 | False |
-| 28 | rosiglitazone | rosiglitazone | 0.037174 | 0.722659 | 0.020807 | 29 | False |
-| 29 | tolazamide | tolazamide | 0.036001 | 0.039250 | 0.000622 | 35 | False |
-| 30 | max_glu_serum | Max glucose serum | 0.034383 | 0.266913 | 0.037386 | 28 | False |
-| 31 | acarbose | acarbose | 0.029535 | 0.041754 | 0.001002 | 34 | False |
-| 32 | pioglitazone | pioglitazone | 0.020459 | 0.609255 | 0.038741 | 27 | False |
-| 33 | repaglinide | repaglinide | 0.019944 | 0.517476 | 0.010104 | 30 | False |
-| 34 | glyburide-metformin | glyburide-metformin | 0.018736 | 0.081426 | 0.009646 | 31 | False |
-| 35 | glimepiride | glimepiride | 0.018357 | 0.628474 | 0.009104 | 32 | False |
-| 36 | nateglinide | nateglinide | 0.018119 | 0.004242 | 0.002469 | 33 | False |
-| 37 | miglitol | miglitol | 0.010632 | 0.238249 | 0.000228 | 37 | False |
-| 38 | troglitazone | troglitazone | 0.000185 | 0.994185 | 0.000593 | 36 | False |
-| 39 | glipizide-metformin | glipizide-metformin | 0.000061 | 0.993251 | 0.000132 | 40 | False |
-| 40 | acetohexamide | acetohexamide | 0.000000 | — | 0.000000 | 43 | False |
-| 41 | tolbutamide | tolbutamide | 0.000000 | — | 0.000181 | 38 | False |
-| 42 | examide | examide | 0.000000 | — | 0.000000 | 43 | False |
-| 43 | citoglipton | citoglipton | 0.000000 | — | 0.000000 | 43 | False |
-| 44 | glimepiride-pioglitazone | glimepiride-pioglitazone | 0.000000 | — | 0.000000 | 43 | False |
-| 45 | metformin-pioglitazone | metformin-pioglitazone | 0.000000 | — | 0.000000 | 43 | False |
-| 46 | metformin-rosiglitazone | metformin-rosiglitazone | 0.000000 | — | 0.000000 | 43 | False |
-
-#### shap_attribution_check_summary.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_attribution_check_summary.csv)；5 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| Unnamed: 0 | value |
-| --- | --- |
-| no_combo_test_ap | 0.24208829304801682 |
-| no_combo_test_auroc | 0.6796290157810532 |
-| main_test_ap | 0.25138291739288315 |
-| spearman_main_vs_no_combo | 0.9386192028162575 |
-| top5_same_set | True |
-
-#### shap_category_effects.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_category_effects.csv)；186 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| feature | value | description | encounters | observed_rate | mean_shap_pp | mean_shap_logodds |
-| --- | --- | --- | --- | --- | --- | --- |
-| A1Cresult | — | — | 16640 | 0.118269 | 0.069469 | 0.008616 |
-| A1Cresult | >8 | — | 1608 | 0.099502 | -0.373498 | -0.040673 |
-| A1Cresult | >7 | — | 775 | 0.082581 | -0.402312 | -0.042908 |
-| A1Cresult | Norm | — | 919 | 0.114255 | -0.404099 | -0.043501 |
-| admission_source_id | 13 |  Sick Baby | 1 | 0.000000 | 0.657211 | 0.062080 |
-| admission_source_id | 7 |  Emergency Room | 11176 | 0.122853 | 0.072672 | 0.009025 |
-| admission_source_id | 1 |  Physician Referral | 5921 | 0.108090 | 0.026535 | 0.003343 |
-| admission_source_id | 9 |  Not Available | 20 | 0.100000 | -0.195907 | -0.029486 |
-| admission_source_id | 6 |  Transfer from another health care facility | 456 | 0.105263 | -0.256558 | -0.032982 |
-| admission_source_id | 4 | Transfer from a hospital | 641 | 0.084243 | -0.295709 | -0.036685 |
-| admission_source_id | 3 | HMO Referral | 29 | 0.137931 | -0.349261 | -0.040229 |
-| admission_source_id | 17 | — | 1294 | 0.102009 | -0.351182 | -0.036054 |
-| admission_source_id | 5 |  Transfer from a Skilled Nursing Facility (SNF) | 156 | 0.121795 | -0.355631 | -0.034846 |
-| admission_source_id | 2 | Clinic Referral | 209 | 0.100478 | -0.356692 | -0.038854 |
-| admission_source_id | 20 |  Not Mapped | 34 | 0.117647 | -0.452238 | -0.048550 |
-| admission_source_id | 8 |  Court/Law Enforcement | 2 | 0.000000 | -0.597527 | -0.060162 |
-| admission_source_id | 11 | Normal Delivery | 1 | 0.000000 | -0.699693 | -0.063918 |
-| admission_source_id | 22 |  Transfer from hospital inpt/same fac reslt in a sep claim | 1 | 0.000000 | -0.749441 | -0.098567 |
-| admission_source_id | 14 |  Extramural Birth | 1 | 0.000000 | -0.960710 | -0.116748 |
-| admission_type_id | 1 | Emergency | 10409 | 0.120377 | 0.029922 | 0.007101 |
-| admission_type_id | 6 | — | 1061 | 0.120641 | -0.049493 | -0.006409 |
-| admission_type_id | 3 | Elective | 3771 | 0.107664 | -0.053697 | -0.004946 |
-| admission_type_id | 2 | Urgent | 3748 | 0.113661 | -0.093956 | -0.007009 |
-| admission_type_id | 5 | Not Available | 891 | 0.087542 | -0.133707 | -0.011427 |
-| admission_type_id | 8 | Not Mapped | 57 | 0.105263 | -0.259073 | -0.027789 |
-| admission_type_id | 7 | Trauma Center | 5 | 0.000000 | -0.607089 | -0.063203 |
-| diag_1 | supplemental_V | — | 334 | 0.155689 | 1.117238 | 0.032829 |
-| diag_1 | mental | — | 425 | 0.112941 | 0.658765 | 0.021227 |
-| diag_1 | circulatory | — | 5864 | 0.122101 | 0.528129 | 0.057514 |
-| diag_1 | endocrine_metabolic | — | 2299 | 0.137886 | 0.306842 | 0.033115 |
-| diag_1 | __MISSING__ | — | 4 | 0.000000 | 0.077111 | 0.011517 |
-| diag_1 | congenital | — | 11 | 0.090909 | 0.035050 | -0.011794 |
-| diag_1 | nervous_sense | — | 257 | 0.101167 | -0.103352 | -0.023154 |
-| diag_1 | infectious_parasitic | — | 489 | 0.104294 | -0.167850 | -0.019673 |
-| diag_1 | blood | — | 209 | 0.129187 | -0.170127 | -0.028215 |
-| diag_1 | neoplasms | — | 617 | 0.110211 | -0.178271 | -0.023818 |
-| diag_1 | skin | — | 515 | 0.095146 | -0.227865 | -0.027301 |
-| diag_1 | pregnancy_childbirth | — | 143 | 0.020979 | -0.307453 | -0.051463 |
-| diag_1 | digestive | — | 1805 | 0.100277 | -0.315340 | -0.035241 |
-| diag_1 | respiratory | — | 2073 | 0.124457 | -0.339035 | -0.036581 |
-| diag_1 | injury_poisoning | — | 1392 | 0.125718 | -0.364532 | -0.040224 |
-| diag_1 | genitourinary | — | 1004 | 0.102590 | -0.394346 | -0.045398 |
-| diag_1 | symptoms_ill_defined | — | 1475 | 0.084068 | -0.411719 | -0.049647 |
-| diag_1 | musculoskeletal | — | 1026 | 0.095517 | -0.579400 | -0.073391 |
-| diag_2 | neoplasms | — | 449 | 0.155902 | 1.267211 | 0.115393 |
-| diag_2 | skin | — | 696 | 0.139368 | 0.564223 | 0.056755 |
-| diag_2 | external_E | — | 163 | 0.141104 | 0.494607 | 0.051109 |
-| diag_2 | nervous_sense | — | 251 | 0.131474 | 0.019115 | -0.003930 |
-| diag_2 | endocrine_metabolic | — | 4196 | 0.106768 | 0.013723 | -0.000306 |
-| diag_2 | circulatory | — | 6152 | 0.116873 | -0.035927 | -0.005202 |
-| diag_2 | infectious_parasitic | — | 370 | 0.132432 | -0.052434 | -0.009747 |
-| diag_2 | injury_poisoning | — | 497 | 0.120724 | -0.087870 | -0.012478 |
-| diag_2 | digestive | — | 770 | 0.101299 | -0.088417 | -0.009901 |
-| diag_2 | mental | — | 492 | 0.101626 | -0.119105 | -0.017056 |
-| diag_2 | symptoms_ill_defined | — | 952 | 0.097689 | -0.121020 | -0.014424 |
-| diag_2 | supplemental_V | — | 342 | 0.099415 | -0.137655 | -0.020326 |
-| diag_2 | genitourinary | — | 1490 | 0.128188 | -0.140796 | -0.016867 |
-| diag_2 | musculoskeletal | — | 406 | 0.100985 | -0.144440 | -0.020499 |
-| diag_2 | blood | — | 532 | 0.101504 | -0.167511 | -0.020682 |
-| diag_2 | congenital | — | 16 | 0.125000 | -0.170256 | -0.019188 |
-| diag_2 | respiratory | — | 1999 | 0.122061 | -0.173222 | -0.020383 |
-| diag_2 | __MISSING__ | — | 72 | 0.125000 | -0.188037 | -0.029310 |
-| diag_2 | pregnancy_childbirth | — | 97 | 0.020619 | -0.208008 | -0.041113 |
-| diag_3 | neoplasms | — | 320 | 0.140625 | 0.847417 | 0.084919 |
-| diag_3 | genitourinary | — | 1213 | 0.130256 | 0.723962 | 0.071483 |
-| diag_3 | skin | — | 489 | 0.122699 | 0.577648 | 0.056075 |
-| diag_3 | respiratory | — | 1283 | 0.134840 | 0.049561 | 0.002782 |
-| diag_3 | digestive | — | 735 | 0.111565 | 0.013563 | -0.001868 |
-| diag_3 | symptoms_ill_defined | — | 879 | 0.138794 | -0.034813 | -0.006451 |
-| diag_3 | blood | — | 474 | 0.126582 | -0.049720 | -0.008037 |
-| diag_3 | mental | — | 609 | 0.111658 | -0.087536 | -0.011968 |
-| diag_3 | supplemental_V | — | 744 | 0.106183 | -0.099453 | -0.013527 |
-| diag_3 | nervous_sense | — | 364 | 0.118132 | -0.104931 | -0.014892 |
-| diag_3 | endocrine_metabolic | — | 5222 | 0.108196 | -0.106022 | -0.014248 |
-| diag_3 | infectious_parasitic | — | 371 | 0.132075 | -0.112681 | -0.015084 |
-| diag_3 | circulatory | — | 5846 | 0.108792 | -0.118741 | -0.014959 |
-| diag_3 | injury_poisoning | — | 380 | 0.131579 | -0.120453 | -0.016169 |
-| diag_3 | congenital | — | 18 | 0.166667 | -0.124476 | -0.017661 |
-| diag_3 | external_E | — | 255 | 0.105882 | -0.126202 | -0.016958 |
-| diag_3 | musculoskeletal | — | 413 | 0.116223 | -0.153526 | -0.019872 |
-| diag_3 | __MISSING__ | — | 258 | 0.104651 | -0.421751 | -0.060432 |
-| diag_3 | pregnancy_childbirth | — | 69 | 0.028986 | -0.430063 | -0.065226 |
-| discharge_disposition_id | 28 | Discharged/transferred/referred to a psychiatric hospital of psychiatric distinct part unit of a hospital | 37 | 0.351351 | 17.209381 | 1.061600 |
-| discharge_disposition_id | 15 | Discharged/transferred within this institution to Medicare approved swing bed | 10 | 0.500000 | 16.674323 | 1.005654 |
-| discharge_disposition_id | 9 | Admitted as an inpatient to this hospital | 1 | 1.000000 | 16.344844 | 0.992350 |
-| discharge_disposition_id | 12 | Still patient or expected to return for outpatient services | 1 | 0.000000 | 13.277339 | 0.952301 |
-| discharge_disposition_id | 22 | Discharged/transferred to another rehab fac including rehab units of a hospital . | 366 | 0.308743 | 9.940470 | 0.778515 |
-| discharge_disposition_id | 5 | Discharged/transferred to another type of inpatient care institution | 226 | 0.221239 | 7.850531 | 0.663093 |
-| discharge_disposition_id | 2 | Discharged/transferred to another short term hospital | 430 | 0.158140 | 3.417794 | 0.265837 |
-| discharge_disposition_id | 24 | Discharged/transferred to a nursing facility certified under Medicaid but not certified under Medicare. | 14 | 0.071429 | 3.333153 | 0.335648 |
-| discharge_disposition_id | 3 | Discharged/transferred to SNF | 2789 | 0.144496 | 1.342521 | 0.170286 |
-| discharge_disposition_id | 7 | Left AMA | 112 | 0.125000 | 1.294053 | 0.171323 |
-| discharge_disposition_id | 10 | Neonate discharged to another hospital for neonatal aftercare | 2 | 0.000000 | 1.263903 | 0.188858 |
-| discharge_disposition_id | 16 | Discharged/transferred/referred another institution for outpatient services | 2 | 0.000000 | 0.082349 | 0.036326 |
-| discharge_disposition_id | 6 | Discharged/transferred to home with home health service | 2598 | 0.114704 | 0.031835 | 0.048492 |
-| discharge_disposition_id | 8 | Discharged/transferred to home under care of Home IV provider | 18 | 0.222222 | -0.001664 | 0.049711 |
-| discharge_disposition_id | 4 | Discharged/transferred to ICF | 164 | 0.121951 | -0.054740 | 0.042799 |
-| discharge_disposition_id | 23 | Discharged/transferred to a long term care hospital. | 90 | 0.088889 | -0.414061 | -0.001895 |
-| discharge_disposition_id | 18 | — | 743 | 0.129206 | -0.452447 | 0.004790 |
-| discharge_disposition_id | 25 | Not Mapped | 214 | 0.093458 | -0.479385 | -0.001738 |
-| discharge_disposition_id | 1 | Discharged to home | 12125 | 0.097567 | -1.401768 | -0.117951 |
-| insulin | Down | — | 2384 | 0.148490 | 0.835668 | 0.086874 |
-| insulin | Up | — | 2222 | 0.126913 | 0.775199 | 0.082974 |
-| insulin | Steady | — | 5967 | 0.115133 | -0.038717 | -0.001968 |
-| insulin | No | — | 9369 | 0.103960 | -0.378819 | -0.042386 |
-| medical_specialty | Hematology | — | 22 | 0.318182 | 4.914335 | 0.305911 |
-| medical_specialty | Hematology/Oncology | — | 36 | 0.138889 | 1.128552 | 0.107092 |
-| medical_specialty | PhysicianNotFound | — | 3 | 0.000000 | 0.726603 | 0.069527 |
-| medical_specialty | Neurophysiology | — | 1 | 0.000000 | 0.688187 | 0.072769 |
-| medical_specialty | Psychiatry-Child/Adolescent | — | 1 | 0.000000 | 0.669115 | 0.084192 |
-| medical_specialty | Anesthesiology | — | 2 | 0.000000 | 0.656858 | 0.090206 |
-| medical_specialty | Radiology | — | 13 | 0.000000 | 0.516031 | 0.060093 |
-| medical_specialty | PhysicalMedicineandRehabilitation | — | 83 | 0.144578 | 0.466447 | 0.032390 |
-| medical_specialty | Proctology | — | 1 | 0.000000 | 0.422568 | 0.053479 |
-| medical_specialty | Oncology | — | 70 | 0.242857 | 0.370863 | 0.035811 |
-| medical_specialty | Nephrology | — | 329 | 0.167173 | 0.266058 | 0.027756 |
-| medical_specialty | OutreachServices | — | 4 | 0.000000 | 0.205195 | 0.027596 |
-| medical_specialty | Surgery-Plastic | — | 10 | 0.200000 | 0.194517 | 0.019897 |
-| medical_specialty | Rheumatology | — | 4 | 0.250000 | 0.174910 | 0.018717 |
-| medical_specialty | __MISSING__ | — | 9576 | 0.116228 | 0.168215 | 0.021981 |
-| medical_specialty | InfectiousDiseases | — | 10 | 0.300000 | 0.149790 | 0.015438 |
-| medical_specialty | Psychiatry | — | 162 | 0.092593 | 0.014457 | -0.008772 |
-| medical_specialty | Surgery-Maxillofacial | — | 3 | 0.000000 | -0.018033 | -0.003562 |
-| medical_specialty | InternalMedicine | — | 2921 | 0.120507 | -0.143370 | -0.007268 |
-| medical_specialty | Family/GeneralPractice | — | 1457 | 0.124228 | -0.184621 | -0.013077 |
-| medical_specialty | Pulmonology | — | 168 | 0.130952 | -0.204568 | -0.018549 |
-| medical_specialty | Emergency/Trauma | — | 1545 | 0.122977 | -0.213153 | -0.015712 |
-| medical_specialty | Gastroenterology | — | 92 | 0.108696 | -0.232136 | -0.020342 |
-| medical_specialty | Surgery-Vascular | — | 104 | 0.182692 | -0.253932 | -0.021307 |
-| medical_specialty | Resident | — | 1 | 1.000000 | -0.264089 | -0.025006 |
-| medical_specialty | Orthopedics | — | 269 | 0.081784 | -0.267168 | -0.027712 |
-| medical_specialty | Pathology | — | 4 | 0.000000 | -0.271763 | -0.021868 |
-| medical_specialty | Surgery-General | — | 617 | 0.126418 | -0.282743 | -0.024842 |
-| medical_specialty | Radiologist | — | 250 | 0.084000 | -0.318258 | -0.029649 |
-| medical_specialty | Podiatry | — | 33 | 0.060606 | -0.328285 | -0.032077 |
-| medical_specialty | Surgery-Thoracic | — | 24 | 0.041667 | -0.336985 | -0.026654 |
-| medical_specialty | SurgicalSpecialty | — | 6 | 0.000000 | -0.360839 | -0.043650 |
-| medical_specialty | Urology | — | 134 | 0.082090 | -0.389538 | -0.040408 |
-| medical_specialty | Osteopath | — | 8 | 0.000000 | -0.396886 | -0.038111 |
-| medical_specialty | Surgeon | — | 11 | 0.090909 | -0.401564 | -0.038588 |
-| medical_specialty | Pediatrics-EmergencyMedicine | — | 1 | 0.000000 | -0.471410 | -0.075581 |
-| medical_specialty | Cardiology-Pediatric | — | 1 | 1.000000 | -0.488181 | -0.068233 |
-| medical_specialty | DCPTEAM | — | 1 | 0.000000 | -0.511681 | -0.059521 |
-| medical_specialty | Endocrinology-Metabolism | — | 2 | 0.500000 | -0.521389 | -0.049097 |
-| medical_specialty | Cardiology | — | 1044 | 0.087165 | -0.526727 | -0.056335 |
-| medical_specialty | Pediatrics | — | 35 | 0.028571 | -0.538589 | -0.058602 |
-| medical_specialty | Obstetrics | — | 4 | 0.000000 | -0.553402 | -0.072583 |
-| medical_specialty | Orthopedics-Reconstructive | — | 254 | 0.082677 | -0.572047 | -0.060695 |
-| medical_specialty | Anesthesiology-Pediatric | — | 2 | 0.000000 | -0.579395 | -0.078100 |
-| medical_specialty | Dentistry | — | 1 | 0.000000 | -0.580788 | -0.078347 |
-| medical_specialty | Psychology | — | 26 | 0.115385 | -0.625538 | -0.061618 |
-| medical_specialty | Surgery-Pediatric | — | 2 | 0.000000 | -0.648821 | -0.079086 |
-| medical_specialty | Obsterics&Gynecology-GynecologicOnco | — | 8 | 0.125000 | -0.672218 | -0.070176 |
-| medical_specialty | Pediatrics-Pulmonology | — | 4 | 0.250000 | -0.768831 | -0.073154 |
-| medical_specialty | Pediatrics-AllergyandImmunology | — | 1 | 0.000000 | -0.833076 | -0.076078 |
-| medical_specialty | Ophthalmology | — | 11 | 0.090909 | -1.001155 | -0.138850 |
-| medical_specialty | Pediatrics-Neurology | — | 3 | 0.000000 | -1.019886 | -0.121522 |
-| medical_specialty | Surgery-Colon&Rectal | — | 4 | 0.250000 | -1.025361 | -0.108654 |
-| medical_specialty | Pediatrics-CriticalCare | — | 16 | 0.062500 | -1.071972 | -0.163732 |
-| medical_specialty | Pediatrics-Endocrinology | — | 45 | 0.000000 | -1.073100 | -0.178649 |
-| medical_specialty | Surgery-Neuro | — | 106 | 0.084906 | -1.109411 | -0.148457 |
-| medical_specialty | ObstetricsandGynecology | — | 140 | 0.035714 | -1.204850 | -0.173385 |
-| medical_specialty | Hospitalist | — | 14 | 0.142857 | -1.213353 | -0.140398 |
-| medical_specialty | Gynecology | — | 10 | 0.000000 | -1.220306 | -0.170060 |
-| medical_specialty | Surgery-Cardiovascular/Thoracic | — | 135 | 0.081481 | -1.240853 | -0.145467 |
-| medical_specialty | Neurology | — | 33 | 0.060606 | -1.298729 | -0.160336 |
-| medical_specialty | Surgery-Cardiovascular | — | 13 | 0.076923 | -1.315472 | -0.153152 |
-| medical_specialty | Otolaryngology | — | 25 | 0.000000 | -1.336610 | -0.176151 |
-| medical_specialty | Endocrinology | — | 27 | 0.111111 | -1.399612 | -0.160681 |
-| payer_code | __MISSING__ | — | 7861 | 0.119959 | 0.613641 | 0.061240 |
-| payer_code | MC | — | 6231 | 0.119082 | -0.147739 | -0.010609 |
-| payer_code | PO | — | 91 | 0.065934 | -0.566241 | -0.073404 |
-| payer_code | OG | — | 190 | 0.105263 | -0.581132 | -0.057314 |
-| payer_code | BC | — | 921 | 0.089034 | -0.610559 | -0.070715 |
-| payer_code | MD | — | 706 | 0.118980 | -0.613937 | -0.066998 |
-| payer_code | SP | — | 1025 | 0.105366 | -0.618679 | -0.068788 |
-| payer_code | HM | — | 1329 | 0.106095 | -0.628356 | -0.066005 |
-| payer_code | UN | — | 483 | 0.101449 | -0.650557 | -0.075135 |
-| payer_code | CH | — | 37 | 0.135135 | -0.656809 | -0.074475 |
-| payer_code | MP | — | 9 | 0.111111 | -0.684753 | -0.076730 |
-| payer_code | CM | — | 371 | 0.113208 | -0.693368 | -0.072877 |
-| payer_code | CP | — | 498 | 0.100402 | -0.706144 | -0.079938 |
-| payer_code | WC | — | 36 | 0.055556 | -0.715735 | -0.084897 |
-| payer_code | OT | — | 18 | 0.055556 | -0.723305 | -0.080609 |
-| payer_code | DM | — | 119 | 0.126050 | -0.753758 | -0.081352 |
-| payer_code | SI | — | 17 | 0.352941 | -0.821241 | -0.078119 |
-
-#### shap_cross_study_salim.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_cross_study_salim.csv)；15 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| salim_rank | encoded_feature | mean_absolute_shap | note |
-| --- | --- | --- | --- |
-| 1 | discharge_group_Transfer | 0.153296 | — |
-| 2 | hospital_pressure | 0.140633 | — |
-| 3 | discharge_group_Expired | 0.106414 | Death discharges are excluded from our cohort |
-| 4 | acute_utilization | 0.106002 | — |
-| 5 | number_inpatient | 0.073864 | — |
-| 6 | number_diagnoses | 0.054216 | — |
-| 7 | discharge_group_Home | 0.046795 | — |
-| 8 | total_visits | 0.045249 | — |
-| 9 | age | 0.044697 | — |
-| 10 | time_in_hospital | 0.038688 | — |
-| 11 | diabetesMed_No | 0.038613 | — |
-| 12 | num_medications | 0.028908 | — |
-| 13 | has_respiratory | 0.024132 | — |
-| 14 | has_circulatory | 0.023873 | — |
-| 15 | num_lab_procedures | 0.023686 | — |
-
-#### shap_global_importance.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_global_importance.csv)；46 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| rank | feature | label | mean_abs_shap_pp | pp_ci_low | pp_ci_high | mean_abs_shap_logodds | logodds_ci_low | logodds_ci_high | mean_signed_shap_pp | rank_ci_low | rank_ci_high | share_of_total_pp | rank_logodds |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | number_inpatient | Prior inpatient visits | 2.800801 | 2.674392 | 2.937299 | 0.270618 | 0.263343 | 0.278482 | 0.613213 | 1 | 1 | 0.295306 | 1 |
-| 2 | discharge_disposition_id | Discharge disposition | 1.499776 | 1.468945 | 1.529097 | 0.134903 | 0.132762 | 0.136981 | -0.288084 | 2 | 2 | 0.158131 | 2 |
-| 3 | payer_code | Payer code | 0.491347 | 0.484493 | 0.499041 | 0.049418 | 0.048851 | 0.050005 | 0.009041 | 3 | 3 | 0.051806 | 4 |
-| 4 | diag_1 | Primary diagnosis | 0.451796 | 0.439879 | 0.464232 | 0.048182 | 0.047484 | 0.048832 | 0.033276 | 4 | 4 | 0.047636 | 5 |
-| 5 | number_diagnoses | Number of diagnoses | 0.419977 | 0.414390 | 0.425707 | 0.053213 | 0.052591 | 0.053772 | 0.062632 | 5 | 6 | 0.044281 | 3 |
-| 6 | number_emergency | Prior emergency visits | 0.395237 | 0.368707 | 0.424392 | 0.038568 | 0.036865 | 0.040479 | 0.060222 | 5 | 7 | 0.041672 | 7 |
-| 7 | insulin | Insulin | 0.379698 | 0.374116 | 0.386552 | 0.040721 | 0.040233 | 0.041286 | -0.003282 | 6 | 7 | 0.040034 | 6 |
-| 8 | time_in_hospital | Length of stay (days) | 0.282082 | 0.277897 | 0.286516 | 0.031475 | 0.031090 | 0.031859 | -0.021592 | 8 | 8 | 0.029742 | 9 |
-| 9 | age | Age | 0.262236 | 0.257998 | 0.266704 | 0.033169 | 0.032652 | 0.033652 | -0.038771 | 9 | 10 | 0.027649 | 8 |
-| 10 | medical_specialty | Medical specialty | 0.256110 | 0.249482 | 0.262736 | 0.027113 | 0.026609 | 0.027640 | -0.051222 | 9 | 10 | 0.027003 | 10 |
-| 11 | chlorpropamide | chlorpropamide | 0.199685 | 0.198828 | 0.200521 | 0.022582 | 0.022462 | 0.022705 | -0.019356 | 11 | 11 | 0.021054 | 12 |
-| 12 | num_medications | Number of medications | 0.196159 | 0.193117 | 0.199117 | 0.021835 | 0.021573 | 0.022066 | 0.041208 | 12 | 13 | 0.020682 | 14 |
-| 13 | metformin | Metformin | 0.192693 | 0.189317 | 0.196136 | 0.022795 | 0.022445 | 0.023133 | 0.012141 | 12 | 14 | 0.020317 | 11 |
-| 14 | diag_3 | Tertiary diagnosis | 0.188348 | 0.185178 | 0.191790 | 0.021396 | 0.021108 | 0.021684 | -0.014342 | 13 | 14 | 0.019859 | 15 |
-| 15 | diag_2 | Secondary diagnosis | 0.179631 | 0.173804 | 0.187021 | 0.019559 | 0.019137 | 0.020061 | -0.010462 | 15 | 16 | 0.018940 | 16 |
-| 16 | diabetesMed | Any diabetes medication | 0.178719 | 0.176155 | 0.181391 | 0.022045 | 0.021794 | 0.022305 | -0.018270 | 15 | 16 | 0.018843 | 13 |
-| 17 | num_lab_procedures | Lab procedures | 0.127121 | 0.125142 | 0.129274 | 0.015636 | 0.015426 | 0.015846 | -0.008798 | 17 | 17 | 0.013403 | 17 |
-| 18 | A1Cresult | HbA1c result | 0.123050 | 0.121135 | 0.125007 | 0.014188 | 0.014012 | 0.014366 | -0.006408 | 18 | 18 | 0.012974 | 18 |
-| 19 | admission_source_id | Admission source | 0.118598 | 0.116035 | 0.121181 | 0.012390 | 0.012185 | 0.012629 | 0.002303 | 19 | 19 | 0.012504 | 19 |
-| 20 | admission_type_id | Admission type | 0.101268 | 0.098270 | 0.104047 | 0.010293 | 0.010073 | 0.010498 | -0.021694 | 20 | 20 | 0.010677 | 20 |
-| 21 | num_procedures | Procedures | 0.075506 | 0.074199 | 0.076821 | 0.008218 | 0.008115 | 0.008316 | 0.004820 | 21 | 21 | 0.007961 | 22 |
-| 22 | gender | Sex | 0.072436 | 0.071650 | 0.073333 | 0.008260 | 0.008207 | 0.008316 | 0.002596 | 22 | 22 | 0.007637 | 21 |
-| 23 | number_outpatient | Prior outpatient visits | 0.059881 | 0.058213 | 0.061885 | 0.005720 | 0.005582 | 0.005864 | -0.003325 | 23 | 24 | 0.006314 | 24 |
-| 24 | race | Race | 0.059836 | 0.058450 | 0.061102 | 0.005590 | 0.005491 | 0.005682 | -0.007826 | 23 | 24 | 0.006309 | 25 |
-| 25 | change | Medication change | 0.053348 | 0.052997 | 0.053765 | 0.006035 | 0.006001 | 0.006068 | 0.001617 | 25 | 25 | 0.005625 | 23 |
-| 26 | glyburide | glyburide | 0.038024 | 0.036984 | 0.039026 | 0.003099 | 0.003031 | 0.003173 | 0.005829 | 26 | 28 | 0.004009 | 31 |
-| 27 | glipizide | glipizide | 0.037463 | 0.036041 | 0.039091 | 0.003913 | 0.003788 | 0.004055 | -0.001258 | 26 | 28 | 0.003950 | 28 |
-| 28 | rosiglitazone | rosiglitazone | 0.037174 | 0.035994 | 0.038502 | 0.004712 | 0.004593 | 0.004837 | -0.003186 | 26 | 29 | 0.003920 | 26 |
-| 29 | tolazamide | tolazamide | 0.036001 | 0.035388 | 0.036624 | 0.004374 | 0.004312 | 0.004437 | -0.006012 | 28 | 30 | 0.003796 | 27 |
-| 30 | max_glu_serum | Max glucose serum | 0.034383 | 0.032321 | 0.036615 | 0.003336 | 0.003235 | 0.003441 | -0.005327 | 29 | 30 | 0.003625 | 30 |
-| 31 | acarbose | acarbose | 0.029535 | 0.029096 | 0.029979 | 0.003692 | 0.003656 | 0.003725 | -0.001045 | 31 | 31 | 0.003114 | 29 |
-| 32 | pioglitazone | pioglitazone | 0.020459 | 0.019654 | 0.021316 | 0.002087 | 0.002025 | 0.002161 | 0.002420 | 32 | 33 | 0.002157 | 32 |
-| 33 | repaglinide | repaglinide | 0.019944 | 0.019319 | 0.020712 | 0.001778 | 0.001729 | 0.001843 | 0.001152 | 32 | 33 | 0.002103 | 36 |
-| 34 | glyburide-metformin | glyburide-metformin | 0.018736 | 0.018017 | 0.019528 | 0.001809 | 0.001749 | 0.001872 | 0.002163 | 34 | 35 | 0.001975 | 35 |
-| 35 | glimepiride | glimepiride | 0.018357 | 0.017854 | 0.018851 | 0.002062 | 0.002013 | 0.002114 | 0.002665 | 34 | 36 | 0.001935 | 33 |
-| 36 | nateglinide | nateglinide | 0.018119 | 0.017499 | 0.018740 | 0.002022 | 0.001949 | 0.002101 | 0.001470 | 34 | 36 | 0.001910 | 34 |
-| 37 | miglitol | miglitol | 0.010632 | 0.010104 | 0.011218 | 0.001471 | 0.001375 | 0.001577 | -0.000660 | 37 | 37 | 0.001121 | 37 |
-| 38 | troglitazone | troglitazone | 0.000185 | 0.000000 | 0.000457 | 0.000020 | 0.000002 | 0.000046 | 0.000185 | 38 | 43 | 0.000019 | 38 |
-| 39 | glipizide-metformin | glipizide-metformin | 0.000061 | 0.000000 | 0.000163 | 0.000012 | 0.000005 | 0.000022 | 0.000061 | 38 | 43 | 0.000006 | 39 |
-| 40 | acetohexamide | acetohexamide | 0.000000 | 0.000000 | 0.000000 | 0.000004 | 0.000004 | 0.000004 | 0.000000 | 40 | 40 | 0.000000 | 40 |
-| 41 | tolbutamide | tolbutamide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 39 | 41 | 0.000000 | 45 |
-| 42 | examide | examide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 41 | 43 | 0.000000 | 45 |
-| 43 | citoglipton | citoglipton | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 42 | 42 | 0.000000 | 45 |
-| 44 | glimepiride-pioglitazone | glimepiride-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 44 | 44 | 0.000000 | 43 |
-| 45 | metformin-pioglitazone | metformin-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 45 | 45 | 0.000000 | 41 |
-| 46 | metformin-rosiglitazone | metformin-rosiglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 46 | 46 | 0.000000 | 42 |
-
-#### shap_missed_summary.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_missed_summary.csv)；13 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| Unnamed: 0 | value |
-| --- | --- |
-| alert_budget | 1994.000000 |
-| score_cutoff | 0.189220 |
-| missed_positives | 1701.000000 |
-| missed_with_zero_prior_inpatient | 995.000000 |
-| zero_visit_encounters | 13233.000000 |
-| zero_visit_prevalence | 0.083957 |
-| zero_visit_auroc | 0.631092 |
-| zero_visit_ap | 0.167839 |
-| ge1_visit_auroc | 0.650355 |
-| ge1_visit_ap | 0.308948 |
-| zero_visit_share_above_cutoff | 0.026449 |
-| zero_visit_inpatient_shap_pp_mean | -1.648336 |
-| zero_visit_fn_median_score | 0.084110 |
-
-#### shap_model_agreement.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_model_agreement.csv)；46 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| feature | label | catboost_logodds | hgb_logodds | catboost_raw_icd9_logodds | catboost_rank | hgb_rank | catboost_raw_icd9_rank |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| number_inpatient | Prior inpatient visits | 0.270618 | 0.293601 | 0.242981 | 1 | 1 | 1 |
-| discharge_disposition_id | Discharge disposition | 0.134903 | 0.211795 | 0.142109 | 2 | 2 | 2 |
-| number_diagnoses | Number of diagnoses | 0.053213 | 0.069703 | 0.037872 | 3 | 3 | 7 |
-| payer_code | Payer code | 0.049418 | 0.035139 | 0.046269 | 4 | 10 | 5 |
-| diag_1 | Primary diagnosis | 0.048182 | 0.063614 | 0.073692 | 5 | 4 | 3 |
-| insulin | Insulin | 0.040721 | 0.024917 | 0.041188 | 6 | 14 | 6 |
-| number_emergency | Prior emergency visits | 0.038568 | 0.037286 | 0.030284 | 7 | 8 | 10 |
-| age | Age | 0.033169 | 0.049741 | 0.035251 | 8 | 5 | 8 |
-| time_in_hospital | Length of stay (days) | 0.031475 | 0.036638 | 0.020725 | 9 | 9 | 13 |
-| medical_specialty | Medical specialty | 0.027113 | 0.042177 | 0.022880 | 10 | 7 | 12 |
-| metformin | Metformin | 0.022795 | 0.034659 | 0.019232 | 11 | 11 | 15 |
-| chlorpropamide | chlorpropamide | 0.022582 | 0.000211 | 0.004912 | 12 | 34 | 26 |
-| diabetesMed | Any diabetes medication | 0.022045 | 0.043077 | 0.025879 | 13 | 6 | 11 |
-| num_medications | Number of medications | 0.021835 | 0.031447 | 0.020576 | 14 | 13 | 14 |
-| diag_3 | Tertiary diagnosis | 0.021396 | 0.019528 | 0.072079 | 15 | 16 | 4 |
-| diag_2 | Secondary diagnosis | 0.019559 | 0.024112 | 0.032981 | 16 | 15 | 9 |
-| num_lab_procedures | Lab procedures | 0.015636 | 0.033088 | 0.012546 | 17 | 12 | 19 |
-| A1Cresult | HbA1c result | 0.014188 | 0.014891 | 0.014873 | 18 | 18 | 16 |
-| admission_source_id | Admission source | 0.012390 | 0.016062 | 0.014427 | 19 | 17 | 17 |
-| admission_type_id | Admission type | 0.010293 | 0.013791 | 0.014245 | 20 | 19 | 18 |
-| gender | Sex | 0.008260 | 0.013128 | 0.003752 | 21 | 20 | 28 |
-| num_procedures | Procedures | 0.008218 | 0.012201 | 0.006690 | 22 | 21 | 21 |
-| change | Medication change | 0.006035 | 0.005034 | 0.000387 | 23 | 25 | 37 |
-| number_outpatient | Prior outpatient visits | 0.005720 | 0.008445 | 0.005790 | 24 | 22 | 23 |
-| race | Race | 0.005590 | 0.007643 | 0.006114 | 25 | 23 | 22 |
-| rosiglitazone | rosiglitazone | 0.004712 | 0.005422 | 0.002869 | 26 | 24 | 31 |
-| tolazamide | tolazamide | 0.004374 | 0.000000 | 0.010149 | 27 | 41 | 20 |
-| glipizide | glipizide | 0.003913 | 0.004793 | 0.004868 | 28 | 26 | 27 |
-| acarbose | acarbose | 0.003692 | 0.000196 | 0.001429 | 29 | 35 | 36 |
-| max_glu_serum | Max glucose serum | 0.003336 | 0.002951 | 0.005125 | 30 | 29 | 25 |
-| glyburide | glyburide | 0.003099 | 0.002711 | 0.002432 | 31 | 30 | 32 |
-| pioglitazone | pioglitazone | 0.002087 | 0.004105 | 0.003136 | 32 | 27 | 30 |
-| glimepiride | glimepiride | 0.002062 | 0.003695 | 0.001655 | 33 | 28 | 34 |
-| nateglinide | nateglinide | 0.002022 | 0.000531 | 0.001612 | 34 | 32 | 35 |
-| glyburide-metformin | glyburide-metformin | 0.001809 | 0.000237 | 0.001817 | 35 | 33 | 33 |
-| repaglinide | repaglinide | 0.001778 | 0.000906 | 0.005247 | 36 | 31 | 24 |
-| miglitol | miglitol | 0.001471 | 0.000000 | 0.003563 | 37 | 41 | 29 |
-| troglitazone | troglitazone | 0.000020 | 0.000000 | 0.000006 | 38 | 41 | 38 |
-| glipizide-metformin | glipizide-metformin | 0.000012 | 0.000000 | 0.000000 | 39 | 41 | 44 |
-| acetohexamide | acetohexamide | 0.000004 | 0.000000 | 0.000001 | 40 | 41 | 39 |
-| metformin-pioglitazone | metformin-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 41 | 41 | 44 |
-| metformin-rosiglitazone | metformin-rosiglitazone | 0.000000 | 0.000000 | 0.000000 | 42 | 41 | 41 |
-| glimepiride-pioglitazone | glimepiride-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 43 | 41 | 40 |
-| tolbutamide | tolbutamide | 0.000000 | 0.000000 | 0.000000 | 45 | 41 | 44 |
-| examide | examide | 0.000000 | 0.000000 | 0.000000 | 45 | 41 | 44 |
-| citoglipton | citoglipton | 0.000000 | 0.000000 | 0.000000 | 45 | 41 | 44 |
-
-#### shap_model_agreement_summary.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_model_agreement_summary.csv)；4 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| Unnamed: 0 | value |
-| --- | --- |
-| spearman_catboost_vs_hgb | 0.931214 |
-| spearman_catboost_vs_raw_icd9 | 0.930630 |
-| top10_overlap_hgb | 9.000000 |
-| top10_overlap_raw_icd9 | 8.000000 |
-
-#### shap_numeric_effects.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_numeric_effects.csv)；69 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| feature | value | encounters | observed_rate | mean_shap_pp | mean_shap_logodds |
-| --- | --- | --- | --- | --- | --- |
-| number_inpatient | 0.0 | 13233 | 0.083957 | -1.648336 | -0.198327 |
-| number_inpatient | 1.0 | 3778 | 0.133404 | 1.822171 | 0.193047 |
-| number_inpatient | 2.0 | 1494 | 0.198126 | 5.178154 | 0.465014 |
-| number_inpatient | 3.0 | 692 | 0.206647 | 8.450300 | 0.679261 |
-| number_inpatient | 4.0 | 311 | 0.257235 | 12.007656 | 0.892247 |
-| number_inpatient | 5.0 | 434 | 0.375576 | 22.670088 | 1.383868 |
-| number_emergency | 0.0 | 17721 | 0.109023 | -0.186839 | -0.021242 |
-| number_emergency | 1.0 | 1498 | 0.144192 | 1.248108 | 0.122845 |
-| number_emergency | 2.0 | 412 | 0.184466 | 2.521446 | 0.213516 |
-| number_emergency | 3.0 | 311 | 0.234727 | 5.155723 | 0.378076 |
-| number_outpatient | 0.0 | 16701 | 0.111131 | -0.034365 | -0.003309 |
-| number_outpatient | 1.0 | 1592 | 0.136307 | 0.192125 | 0.017953 |
-| number_outpatient | 2.0 | 720 | 0.147222 | 0.178151 | 0.017075 |
-| number_outpatient | 3.0 | 929 | 0.127018 | 0.079111 | 0.007388 |
-| number_diagnoses | 1.0 | 43 | 0.116279 | -1.216617 | -0.193538 |
-| number_diagnoses | 2.0 | 187 | 0.101604 | -1.198730 | -0.177828 |
-| number_diagnoses | 3.0 | 562 | 0.094306 | -1.143129 | -0.160126 |
-| number_diagnoses | 4.0 | 1083 | 0.090489 | -0.841185 | -0.121923 |
-| number_diagnoses | 5.0 | 2307 | 0.096229 | -0.541843 | -0.080684 |
-| number_diagnoses | 6.0 | 1987 | 0.109210 | -0.127059 | -0.024864 |
-| number_diagnoses | 7.0 | 2091 | 0.098039 | 0.008392 | -0.007081 |
-| number_diagnoses | 8.0 | 2066 | 0.127299 | 0.197787 | 0.017054 |
-| number_diagnoses | 9.0 | 9592 | 0.126043 | 0.431869 | 0.050428 |
-| number_diagnoses | 10.0 | 4 | 0.500000 | 0.417410 | 0.044604 |
-| number_diagnoses | 12.0 | 3 | 0.000000 | 0.409713 | 0.050245 |
-| number_diagnoses | 13.0 | 6 | 0.166667 | 0.513279 | 0.056921 |
-| number_diagnoses | 14.0 | 1 | 1.000000 | 0.539324 | 0.049473 |
-| number_diagnoses | 15.0 | 3 | 0.000000 | 0.439643 | 0.052164 |
-| number_diagnoses | 16.0 | 7 | 0.285714 | 0.703926 | 0.086553 |
-| time_in_hospital | 1.0 | 2750 | 0.088000 | -0.504496 | -0.059521 |
-| time_in_hospital | 2.0 | 3332 | 0.099040 | -0.187138 | -0.019430 |
-| time_in_hospital | 3.0 | 3582 | 0.106644 | -0.016610 | 0.001619 |
-| time_in_hospital | 4.0 | 2701 | 0.123288 | 0.085266 | 0.012558 |
-| time_in_hospital | 5.0 | 1899 | 0.120063 | 0.180028 | 0.023765 |
-| time_in_hospital | 6.0 | 1481 | 0.141796 | 0.219256 | 0.026792 |
-| time_in_hospital | 7.0 | 1127 | 0.131322 | 0.448449 | 0.052150 |
-| time_in_hospital | 8.0 | 894 | 0.146532 | 0.572663 | 0.065203 |
-| time_in_hospital | 9.0 | 644 | 0.122671 | 0.583554 | 0.066099 |
-| time_in_hospital | 10.0 | 445 | 0.146067 | 0.509901 | 0.061598 |
-| time_in_hospital | 11.0 | 360 | 0.097222 | -0.789568 | -0.064281 |
-| time_in_hospital | 12.0 | 272 | 0.172794 | -0.759152 | -0.057096 |
-| time_in_hospital | 13.0 | 248 | 0.129032 | -0.799983 | -0.063591 |
-| time_in_hospital | 14.0 | 207 | 0.169082 | -0.908369 | -0.071889 |
-| num_medications | (0.999, 8.0] | 3014 | 0.083610 | -0.225270 | -0.033570 |
-| num_medications | (8.0, 10.0] | 2031 | 0.109306 | -0.178147 | -0.024659 |
-| num_medications | (10.0, 13.0] | 3529 | 0.106262 | -0.072332 | -0.011088 |
-| num_medications | (13.0, 15.0] | 2259 | 0.122178 | 0.035647 | 0.001412 |
-| num_medications | (15.0, 17.0] | 2038 | 0.110402 | 0.137393 | 0.012512 |
-| num_medications | (17.0, 20.0] | 2398 | 0.129274 | 0.211339 | 0.021475 |
-| num_medications | (20.0, 25.0] | 2483 | 0.151027 | 0.229648 | 0.023173 |
-| num_medications | (25.0, 69.0] | 2190 | 0.119635 | 0.310625 | 0.028320 |
-| num_lab_procedures | (0.999, 18.0] | 2586 | 0.098995 | -0.230073 | -0.032799 |
-| num_lab_procedures | (18.0, 31.0] | 2521 | 0.102340 | -0.103907 | -0.014874 |
-| num_lab_procedures | (31.0, 38.0] | 2423 | 0.107305 | 0.030863 | 0.002218 |
-| num_lab_procedures | (38.0, 44.0] | 2777 | 0.118833 | 0.102946 | 0.012880 |
-| num_lab_procedures | (44.0, 50.0] | 2457 | 0.118030 | 0.079946 | 0.011509 |
-| num_lab_procedures | (50.0, 57.0] | 2505 | 0.123353 | 0.049260 | 0.010075 |
-| num_lab_procedures | (57.0, 65.0] | 2289 | 0.140236 | 0.045370 | 0.009715 |
-| num_lab_procedures | (65.0, 121.0] | 2384 | 0.114513 | -0.043153 | 0.000762 |
-| age | 5.0 | 29 | 0.000000 | -1.852265 | -0.297700 |
-| age | 15.0 | 160 | 0.087500 | -1.671594 | -0.231489 |
-| age | 25.0 | 319 | 0.153605 | -0.384239 | -0.059565 |
-| age | 35.0 | 758 | 0.097625 | -0.351962 | -0.051097 |
-| age | 45.0 | 1934 | 0.112203 | -0.385636 | -0.040988 |
-| age | 55.0 | 3440 | 0.106977 | -0.388608 | -0.039287 |
-| age | 65.0 | 4457 | 0.109715 | 0.007423 | 0.008880 |
-| age | 75.0 | 5055 | 0.124233 | 0.168992 | 0.025762 |
-| age | 85.0 | 3279 | 0.123208 | 0.305689 | 0.040234 |
-| age | 95.0 | 511 | 0.105675 | 0.254985 | 0.034036 |
-
-#### shap_reference_sensitivity.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_reference_sensitivity.csv)；46 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| Unnamed: 0 | reference_seed_11 | reference_seed_22 | reference_seed_33 | main_reference | max_minus_min |
-| --- | --- | --- | --- | --- | --- |
-| number_inpatient | 2.901302 | 2.886343 | 2.549793 | 2.489262 | 0.412040 |
-| discharge_disposition_id | 1.561880 | 1.669517 | 1.445687 | 1.652697 | 0.223830 |
-| payer_code | 0.617865 | 0.584444 | 0.574313 | 0.599628 | 0.043551 |
-| diag_1 | 0.462828 | 0.452591 | 0.452652 | 0.456484 | 0.010236 |
-| number_diagnoses | 0.438717 | 0.442571 | 0.444738 | 0.422683 | 0.022055 |
-| insulin | 0.367319 | 0.340508 | 0.343348 | 0.349431 | 0.026811 |
-| medical_specialty | 0.307251 | 0.321847 | 0.293041 | 0.309815 | 0.028806 |
-| time_in_hospital | 0.299255 | 0.300911 | 0.299598 | 0.288331 | 0.012581 |
-| age | 0.272239 | 0.279467 | 0.275460 | 0.283247 | 0.011009 |
-| number_emergency | 0.244513 | 0.300845 | 0.267517 | 0.222867 | 0.077978 |
-| num_medications | 0.214624 | 0.203571 | 0.199573 | 0.201635 | 0.015052 |
-| chlorpropamide | 0.199896 | 0.202851 | 0.195815 | 0.200993 | 0.007036 |
-| diabetesMed | 0.192794 | 0.210370 | 0.201507 | 0.194581 | 0.017576 |
-| metformin | 0.170464 | 0.158205 | 0.179981 | 0.175697 | 0.021776 |
-| diag_3 | 0.166444 | 0.170675 | 0.160229 | 0.174944 | 0.014715 |
-| diag_2 | 0.152526 | 0.173176 | 0.146067 | 0.158661 | 0.027109 |
-| admission_source_id | 0.163072 | 0.164376 | 0.161992 | 0.157286 | 0.007090 |
-| admission_type_id | 0.127492 | 0.126203 | 0.125050 | 0.128738 | 0.003688 |
-| A1Cresult | 0.122504 | 0.118544 | 0.121716 | 0.118763 | 0.003961 |
-| num_lab_procedures | 0.123964 | 0.127419 | 0.126401 | 0.117525 | 0.009893 |
-| num_procedures | 0.077168 | 0.077210 | 0.073797 | 0.073600 | 0.003610 |
-| gender | 0.067306 | 0.073194 | 0.066597 | 0.065247 | 0.007947 |
-| change | 0.050646 | 0.051420 | 0.049880 | 0.051912 | 0.002032 |
-| race | 0.049800 | 0.048624 | 0.045116 | 0.049035 | 0.004684 |
-| number_outpatient | 0.052847 | 0.034754 | 0.037097 | 0.041529 | 0.018093 |
-| tolazamide | 0.040288 | 0.040443 | 0.035030 | 0.040896 | 0.005865 |
-| glipizide | 0.037773 | 0.047622 | 0.039548 | 0.040449 | 0.009849 |
-| rosiglitazone | 0.041134 | 0.045558 | 0.041890 | 0.038713 | 0.006845 |
-| glyburide | 0.035202 | 0.038066 | 0.033199 | 0.037795 | 0.004866 |
-| acarbose | 0.031415 | 0.033973 | 0.031571 | 0.032163 | 0.002559 |
-| max_glu_serum | 0.034744 | 0.037845 | 0.035171 | 0.032082 | 0.005763 |
-| glimepiride | 0.019484 | 0.015853 | 0.017945 | 0.018072 | 0.003630 |
-| repaglinide | 0.018797 | 0.016806 | 0.016136 | 0.016567 | 0.002661 |
-| pioglitazone | 0.011764 | 0.011576 | 0.016909 | 0.015462 | 0.005333 |
-| nateglinide | 0.015870 | 0.017446 | 0.014521 | 0.015430 | 0.002925 |
-| glyburide-metformin | 0.016252 | 0.015417 | 0.013732 | 0.015349 | 0.002520 |
-| miglitol | 0.010626 | 0.010813 | 0.009862 | 0.010035 | 0.000951 |
-| troglitazone | 0.001863 | 0.001868 | 0.001824 | 0.001841 | 0.000044 |
-| tolbutamide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| acetohexamide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| citoglipton | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| examide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| glimepiride-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| glipizide-metformin | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| metformin-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| metformin-rosiglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-
-#### shap_sample384_rank_agreement.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_sample384_rank_agreement.csv)；3 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| Unnamed: 0 | value |
-| --- | --- |
-| share_same_top5_set | 0.701000 |
-| share_same_top5_order | 0.457000 |
-| share_same_top2_order | 1.000000 |
-
-#### shap_sample384_variability.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_sample384_variability.csv)；5 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| feature | slide40_pp | full_test_pp | sample384_p2.5 | sample384_p97.5 |
-| --- | --- | --- | --- | --- |
-| number_inpatient | 3.170000 | 2.800801 | 2.473826 | 3.206195 |
-| discharge_disposition_id | 1.810000 | 1.499776 | 1.318327 | 1.712636 |
-| number_emergency | 0.650000 | 0.395237 | 0.326110 | 0.481731 |
-| diag_1 | 0.560000 | 0.451796 | 0.395132 | 0.531119 |
-| payer_code | 0.530000 | 0.491347 | 0.452204 | 0.532033 |
-
-#### shap_zero_visit_drivers.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/shap_zero_visit_drivers.csv)；46 列。 此表是 80/20 SHAP；第 11 節另列本專題五折 SHAP。
-
-| feature | label | mean_pp_flagged_readmit | mean_pp_missed_readmit | mean_pp_true_negative | mean_pp_all_readmitted_zero_visit | mean_pp_all_not_readmitted_zero_visit | flagged_minus_missed | readmitted_minus_not |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| discharge_disposition_id | Discharge disposition | 13.147039 | -0.352806 | -0.703200 | 1.056719 | -0.472730 | 13.499846 | 1.529448 |
-| diag_1 | Primary diagnosis | 2.077990 | 0.029314 | -0.032214 | 0.243217 | -0.012911 | 2.048677 | 0.256127 |
-| payer_code | Payer code | 1.639533 | 0.049453 | -0.037521 | 0.215474 | -0.013664 | 1.590080 | 0.229138 |
-| medical_specialty | Medical specialty | 1.315145 | -0.059886 | -0.101776 | 0.083682 | -0.084375 | 1.375031 | 0.168057 |
-| admission_type_id | Admission type | 0.956424 | -0.031253 | -0.052251 | 0.071871 | -0.035647 | 0.987677 | 0.107518 |
-| chlorpropamide | chlorpropamide | 0.436007 | -0.002295 | -0.037855 | 0.043469 | -0.029273 | 0.438302 | 0.072742 |
-| diag_2 | Secondary diagnosis | 0.433187 | -0.003846 | -0.037337 | 0.041785 | -0.030367 | 0.437033 | 0.072151 |
-| admission_source_id | Admission source | 0.429728 | 0.004994 | -0.020465 | 0.049340 | -0.012489 | 0.424734 | 0.061829 |
-| insulin | Insulin | 0.207927 | -0.007537 | -0.043459 | 0.014959 | -0.041305 | 0.215464 | 0.056264 |
-| age | Age | 0.165425 | -0.016893 | -0.069212 | 0.002143 | -0.066820 | 0.182318 | 0.068963 |
-| tolazamide | tolazamide | 0.143916 | -0.005713 | -0.014956 | 0.009910 | -0.011948 | 0.149629 | 0.021858 |
-| race | Race | 0.133352 | -0.010327 | -0.007381 | 0.004674 | -0.005894 | 0.143680 | 0.010568 |
-| acarbose | acarbose | 0.129438 | -0.000654 | -0.005624 | 0.012929 | -0.003699 | 0.130092 | 0.016628 |
-| diag_3 | Tertiary diagnosis | 0.099035 | -0.014799 | -0.033222 | -0.002913 | -0.031128 | 0.113834 | 0.028215 |
-| time_in_hospital | Length of stay (days) | 0.108853 | 0.022971 | -0.034621 | 0.031938 | -0.032136 | 0.085882 | 0.064074 |
-| glyburide-metformin | glyburide-metformin | 0.077673 | 0.001424 | -0.002160 | 0.009386 | -0.001000 | 0.076249 | 0.010385 |
-| num_medications | Number of medications | 0.124138 | 0.057454 | 0.020035 | 0.064416 | 0.021811 | 0.066684 | 0.042605 |
-| nateglinide | nateglinide | 0.060474 | -0.001771 | -0.001564 | 0.004728 | -0.000570 | 0.062246 | 0.005298 |
-| number_emergency | Prior emergency visits | -0.006855 | -0.064340 | -0.072027 | -0.058338 | -0.071408 | 0.057485 | 0.013070 |
-| diabetesMed | Any diabetes medication | 0.032236 | -0.001325 | -0.029773 | 0.002180 | -0.028839 | 0.033561 | 0.031019 |
-| number_diagnoses | Number of diagnoses | 0.104064 | 0.073224 | 0.003247 | 0.076444 | 0.005760 | 0.030840 | 0.070683 |
-| gender | Sex | 0.018602 | -0.000416 | 0.002691 | 0.001570 | 0.002840 | 0.019017 | -0.001270 |
-| change | Medication change | 0.016030 | 0.001207 | -0.000462 | 0.002755 | -0.000212 | 0.014822 | 0.002967 |
-| glipizide | glipizide | 0.010472 | -0.000612 | -0.003630 | 0.000546 | -0.003738 | 0.011084 | 0.004283 |
-| repaglinide | repaglinide | 0.008623 | -0.000814 | 0.001781 | 0.000171 | 0.001605 | 0.009438 | -0.001434 |
-| num_lab_procedures | Lab procedures | 0.004192 | -0.002173 | -0.016512 | -0.001508 | -0.016302 | 0.006365 | 0.014793 |
-| num_procedures | Procedures | 0.010640 | 0.005493 | -0.001008 | 0.006030 | -0.000365 | 0.005148 | 0.006395 |
-| glimepiride | glimepiride | 0.005551 | 0.002412 | 0.001433 | 0.002740 | 0.001530 | 0.003138 | 0.001210 |
-| rosiglitazone | rosiglitazone | -0.003873 | -0.004178 | -0.004144 | -0.004146 | -0.004481 | 0.000305 | 0.000335 |
-| glimepiride-pioglitazone | glimepiride-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| metformin-rosiglitazone | metformin-rosiglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| glipizide-metformin | glipizide-metformin | 0.000000 | 0.000000 | 0.000065 | 0.000000 | 0.000063 | 0.000000 | -0.000063 |
-| citoglipton | citoglipton | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| examide | examide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| metformin-pioglitazone | metformin-pioglitazone | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| tolbutamide | tolbutamide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| acetohexamide | acetohexamide | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
-| troglitazone | troglitazone | 0.000000 | 0.000000 | 0.000310 | 0.000000 | 0.000304 | 0.000000 | -0.000304 |
-| pioglitazone | pioglitazone | 0.000453 | 0.001187 | -0.000224 | 0.001110 | -0.000284 | -0.000734 | 0.001395 |
-| number_outpatient | Prior outpatient visits | -0.011296 | -0.008586 | -0.010021 | -0.008869 | -0.010586 | -0.002710 | 0.001717 |
-| miglitol | miglitol | -0.008837 | 0.000399 | -0.000705 | -0.000566 | -0.001008 | -0.009236 | 0.000442 |
-| metformin | Metformin | -0.017571 | -0.000957 | -0.004782 | -0.002692 | -0.004580 | -0.016614 | 0.001888 |
-| A1Cresult | HbA1c result | -0.035548 | -0.016784 | -0.020671 | -0.018743 | -0.019893 | -0.018765 | 0.001150 |
-| max_glu_serum | Max glucose serum | -0.018491 | 0.004951 | 0.003296 | 0.002503 | 0.002666 | -0.023442 | -0.000163 |
-| number_inpatient | Prior inpatient visits | -1.876608 | -1.662400 | -1.641363 | -1.684766 | -1.644998 | -0.214208 | -0.039768 |
-| glyburide | glyburide | -0.276159 | 0.012930 | 0.011600 | -0.017254 | 0.006177 | -0.289089 | -0.023431 |
-
-#### subgroup_metrics.csv
-
-來源：[原始 CSV](../salim-ibrahim-2026-readmission/results/tables/subgroup_metrics.csv)；39 列。
-
-| variable | group | method | encounters | positives | prevalence | auroc | ap | ap_lift_over_prevalence | mean_predicted | observed_to_expected | share_flagged_top10 | recall_top10 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| sex | Female | hgb | 10768 | 1275 | 0.118406 | 0.677644 | 0.240316 | 2.029586 | 0.113869 | 1.039848 | 0.098068 | 0.232941 |
-| sex | Female | catboost | 10768 | 1275 | 0.118406 | 0.679740 | 0.256513 | 2.166382 | 0.112919 | 1.048596 | 0.100669 | 0.249412 |
-| sex | Female | catboost_platt | 10768 | 1275 | 0.118406 | 0.679740 | 0.256513 | 2.166382 | 0.113954 | 1.039075 | 0.100669 | 0.249412 |
-| sex | Male | hgb | 9174 | 1022 | 0.111402 | 0.682299 | 0.234909 | 2.108668 | 0.113468 | 0.981791 | 0.102245 | 0.262231 |
-| sex | Male | catboost | 9174 | 1022 | 0.111402 | 0.686325 | 0.245609 | 2.204715 | 0.112222 | 0.992691 | 0.099193 | 0.272016 |
-| sex | Male | catboost_platt | 9174 | 1022 | 0.111402 | 0.686325 | 0.245609 | 2.204715 | 0.113209 | 0.984041 | 0.099193 | 0.272016 |
-| age_band | <50 | hgb | 3200 | 354 | 0.110625 | 0.708526 | 0.298216 | 2.695742 | 0.104194 | 1.061721 | 0.119063 | 0.341808 |
-| age_band | <50 | catboost | 3200 | 354 | 0.110625 | 0.718660 | 0.318142 | 2.875860 | 0.103251 | 1.071416 | 0.111562 | 0.324859 |
-| age_band | <50 | catboost_platt | 3200 | 354 | 0.110625 | 0.718660 | 0.318142 | 2.875860 | 0.104060 | 1.063093 | 0.111562 | 0.324859 |
-| age_band | 70+ | hgb | 8845 | 1086 | 0.122781 | 0.646085 | 0.213870 | 1.741876 | 0.123045 | 0.997857 | 0.103561 | 0.222836 |
-| age_band | 70+ | catboost | 8845 | 1086 | 0.122781 | 0.650730 | 0.233314 | 1.900245 | 0.120963 | 1.015028 | 0.103901 | 0.238490 |
-| age_band | 70+ | catboost_platt | 8845 | 1086 | 0.122781 | 0.650730 | 0.233314 | 1.900245 | 0.122342 | 1.003588 | 0.103901 | 0.238490 |
-| age_band | 50-69 | hgb | 7897 | 857 | 0.108522 | 0.697965 | 0.240527 | 2.216386 | 0.107046 | 1.013791 | 0.088261 | 0.235706 |
-| age_band | 50-69 | catboost | 7897 | 857 | 0.108522 | 0.697042 | 0.247864 | 2.283989 | 0.107017 | 1.014068 | 0.090921 | 0.259043 |
-| age_band | 50-69 | catboost_platt | 7897 | 857 | 0.108522 | 0.697042 | 0.247864 | 2.283989 | 0.107702 | 1.007618 | 0.090921 | 0.259043 |
-| race | Caucasian | hgb | 14964 | 1717 | 0.114742 | 0.678619 | 0.235031 | 2.048340 | 0.115135 | 0.996590 | 0.102446 | 0.253349 |
-| race | Caucasian | catboost | 14964 | 1717 | 0.114742 | 0.681410 | 0.252349 | 2.199273 | 0.113832 | 1.007994 | 0.102245 | 0.264997 |
-| race | Caucasian | catboost_platt | 14964 | 1717 | 0.114742 | 0.681410 | 0.252349 | 2.199273 | 0.114907 | 0.998563 | 0.102245 | 0.264997 |
-| race | AfricanAmerican | hgb | 3689 | 444 | 0.120358 | 0.676088 | 0.254748 | 2.116587 | 0.113158 | 1.063626 | 0.104906 | 0.247748 |
-| race | AfricanAmerican | catboost | 3689 | 444 | 0.120358 | 0.680613 | 0.261362 | 2.171539 | 0.112513 | 1.069723 | 0.106804 | 0.268018 |
-| race | AfricanAmerican | catboost_platt | 3689 | 444 | 0.120358 | 0.680613 | 0.261362 | 2.171539 | 0.113566 | 1.059801 | 0.106804 | 0.268018 |
-| race | Missing | hgb | 441 | 37 | 0.083900 | 0.709393 | 0.201846 | 2.405786 | 0.093298 | 0.899274 | 0.027211 | 0.054054 |
-| race | Missing | catboost | 441 | 37 | 0.083900 | 0.654134 | 0.141454 | 1.685977 | 0.088662 | 0.946293 | 0.020408 | 0.027027 |
-| race | Missing | catboost_platt | 441 | 37 | 0.083900 | 0.654134 | 0.141454 | 1.685977 | 0.088153 | 0.951760 | 0.020408 | 0.027027 |
-| race | Other | hgb | 321 | 45 | 0.140187 | 0.637762 | 0.242293 | 1.728357 | 0.105584 | 1.327728 | 0.074766 | 0.133333 |
-| race | Other | catboost | 321 | 45 | 0.140187 | 0.651852 | 0.274934 | 1.961198 | 0.113481 | 1.235337 | 0.084112 | 0.177778 |
-| race | Other | catboost_platt | 321 | 45 | 0.140187 | 0.651852 | 0.274934 | 1.961198 | 0.114613 | 1.223130 | 0.084112 | 0.177778 |
-| race | Hispanic | hgb | 408 | 41 | 0.100490 | 0.756629 | 0.308210 | 3.067069 | 0.100700 | 0.997912 | 0.085784 | 0.268293 |
-| race | Hispanic | catboost | 408 | 41 | 0.100490 | 0.748721 | 0.281444 | 2.800711 | 0.100769 | 0.997236 | 0.073529 | 0.268293 |
-| race | Hispanic | catboost_platt | 408 | 41 | 0.100490 | 0.748721 | 0.281444 | 2.800711 | 0.101119 | 0.993781 | 0.073529 | 0.268293 |
-| prior_inpatient | 0 | hgb | 13233 | 1111 | 0.083957 | 0.630863 | 0.158095 | 1.883057 | 0.086243 | 0.973489 | 0.021461 | 0.081008 |
-| prior_inpatient | 0 | catboost | 13233 | 1111 | 0.083957 | 0.631092 | 0.167839 | 1.999118 | 0.085259 | 0.984727 | 0.026449 | 0.104410 |
-| prior_inpatient | 0 | catboost_platt | 13233 | 1111 | 0.083957 | 0.631092 | 0.167839 | 1.999118 | 0.084477 | 0.993836 | 0.026449 | 0.104410 |
-| prior_inpatient | 1-2 | hgb | 5272 | 800 | 0.151745 | 0.615483 | 0.231467 | 1.525366 | 0.142183 | 1.067254 | 0.102428 | 0.176250 |
-| prior_inpatient | 1-2 | catboost | 5272 | 800 | 0.151745 | 0.623622 | 0.251818 | 1.659479 | 0.140114 | 1.083008 | 0.092375 | 0.172500 |
-| prior_inpatient | 1-2 | catboost_platt | 5272 | 800 | 0.151745 | 0.623622 | 0.251818 | 1.659479 | 0.142526 | 1.064684 | 0.092375 | 0.172500 |
-| prior_inpatient | 3+ | hgb | 1437 | 386 | 0.268615 | 0.612917 | 0.385467 | 1.435015 | 0.261832 | 1.025909 | 0.814196 | 0.865285 |
-| prior_inpatient | 3+ | catboost | 1437 | 386 | 0.268615 | 0.624032 | 0.399444 | 1.487051 | 0.263411 | 1.019758 | 0.805150 | 0.886010 |
-| prior_inpatient | 3+ | catboost_platt | 1437 | 386 | 0.268615 | 0.624032 | 0.399444 | 1.487051 | 0.275812 | 0.973908 | 0.805150 | 0.886010 |
-
-## 11. 本專題五折 SHAP 全部特徵
-
-此表直接列出最新五折比較的全域 SHAP 排名。每模型五折共抽樣 5,000 筆測試資料；`MeanAbsSHAP_logodds` 是預測影響大小，`MeanSHAP_logodds` 是帶正負號的樣本平均，不能單獨解讀為特徵數值增加的方向。
-
-來源：[原始 CSV](results/paper_fair_comparison_seed777/shap_global.csv)；145 列。
-
-| Model | Feature | MeanAbsSHAP_logodds | MeanSHAP_logodds | Explained_Rows | Rank |
-| --- | --- | --- | --- | --- | --- |
-| catboost_family | number_inpatient | 0.274974 | -0.004131 | 5000 | 1 |
-| catboost_family | discharge_disposition_id | 0.145840 | -0.007819 | 5000 | 2 |
-| catboost_family | number_diagnoses | 0.051209 | -0.001067 | 5000 | 3 |
-| catboost_family | payer_code | 0.047029 | -0.000074 | 5000 | 4 |
-| catboost_family | diag_1 | 0.046731 | -0.001012 | 5000 | 5 |
-| catboost_family | insulin | 0.034967 | 0.000470 | 5000 | 6 |
-| catboost_family | number_emergency | 0.033348 | -0.000824 | 5000 | 7 |
-| catboost_family | time_in_hospital | 0.032822 | -0.000897 | 5000 | 8 |
-| catboost_family | diabetesMed | 0.029644 | 0.001155 | 5000 | 9 |
-| catboost_family | medical_specialty | 0.027537 | -0.003206 | 5000 | 10 |
-| catboost_family | age | 0.027488 | -0.000105 | 5000 | 11 |
-| catboost_family | num_medications | 0.023377 | 0.000807 | 5000 | 12 |
-| catboost_family | metformin | 0.023050 | 0.000286 | 5000 | 13 |
-| catboost_family | num_lab_procedures | 0.018053 | -0.000128 | 5000 | 14 |
-| catboost_family | diag_3 | 0.017920 | -0.002255 | 5000 | 15 |
-| catboost_family | A1Cresult | 0.016652 | 0.000418 | 5000 | 16 |
-| catboost_family | diag_2 | 0.016433 | -0.000561 | 5000 | 17 |
-| catboost_family | admission_source_id | 0.014058 | -0.000495 | 5000 | 18 |
-| catboost_family | admission_type_id | 0.008772 | 0.000640 | 5000 | 19 |
-| catboost_family | num_procedures | 0.008510 | -0.000373 | 5000 | 20 |
-| catboost_family | change | 0.007690 | -0.000459 | 5000 | 21 |
-| catboost_family | race | 0.006354 | 0.000496 | 5000 | 22 |
-| catboost_family | glipizide | 0.005618 | -0.001950 | 5000 | 23 |
-| catboost_family | tolazamide | 0.005131 | -0.000193 | 5000 | 24 |
-| catboost_family | acarbose | 0.004496 | 0.000978 | 5000 | 25 |
-| catboost_family | chlorpropamide | 0.004233 | 0.000006 | 5000 | 26 |
-| catboost_family | rosiglitazone | 0.004206 | 0.001717 | 5000 | 27 |
-| catboost_family | number_outpatient | 0.004083 | -0.000037 | 5000 | 28 |
-| catboost_family | gender | 0.003558 | 0.000079 | 5000 | 29 |
-| catboost_family | max_glu_serum | 0.003524 | 0.000039 | 5000 | 30 |
-| catboost_family | pioglitazone | 0.003302 | -0.000081 | 5000 | 31 |
-| catboost_family | miglitol | 0.003174 | 0.000209 | 5000 | 32 |
-| catboost_family | glimepiride | 0.003015 | -0.000248 | 5000 | 33 |
-| catboost_family | repaglinide | 0.002715 | -0.000480 | 5000 | 34 |
-| catboost_family | glyburide | 0.002695 | 0.000367 | 5000 | 35 |
-| catboost_family | glyburide-metformin | 0.002305 | 0.000576 | 5000 | 36 |
-| catboost_family | nateglinide | 0.001552 | -0.000230 | 5000 | 37 |
-| catboost_family | troglitazone | 0.000063 | 0.000054 | 5000 | 38 |
-| catboost_family | tolbutamide | 0.000027 | -0.000001 | 5000 | 39 |
-| catboost_family | glipizide-metformin | 0.000010 | -0.000010 | 5000 | 40 |
-| catboost_family | metformin-rosiglitazone | 0.000003 | -0.000003 | 5000 | 41 |
-| catboost_family | metformin-pioglitazone | 0.000002 | -0.000002 | 5000 | 42 |
-| catboost_family | acetohexamide | 0.000001 | -0.000001 | 5000 | 43 |
-| catboost_family | glimepiride-pioglitazone | 0.000001 | -0.000001 | 5000 | 44 |
-| catboost_family | examide | 0.000000 | 0.000000 | 5000 | 45 |
-| catboost_family | citoglipton | 0.000000 | 0.000000 | 5000 | 46 |
-| catboost_raw | number_inpatient | 0.238927 | 0.001074 | 5000 | 1 |
-| catboost_raw | discharge_disposition_id | 0.139130 | -0.009240 | 5000 | 2 |
-| catboost_raw | diag_1 | 0.077924 | -0.004088 | 5000 | 3 |
-| catboost_raw | diag_3 | 0.059604 | -0.001725 | 5000 | 4 |
-| catboost_raw | payer_code | 0.042366 | -0.000048 | 5000 | 5 |
-| catboost_raw | number_diagnoses | 0.035444 | 0.000665 | 5000 | 6 |
-| catboost_raw | number_emergency | 0.033120 | -0.001227 | 5000 | 7 |
-| catboost_raw | diag_2 | 0.032718 | -0.000223 | 5000 | 8 |
-| catboost_raw | insulin | 0.032097 | -0.002233 | 5000 | 9 |
-| catboost_raw | diabetesMed | 0.030251 | 0.000967 | 5000 | 10 |
-| catboost_raw | age | 0.027335 | 0.001198 | 5000 | 11 |
-| catboost_raw | medical_specialty | 0.024195 | -0.001109 | 5000 | 12 |
-| catboost_raw | num_medications | 0.022092 | -0.000394 | 5000 | 13 |
-| catboost_raw | time_in_hospital | 0.021174 | -0.000237 | 5000 | 14 |
-| catboost_raw | admission_source_id | 0.015376 | 0.000224 | 5000 | 15 |
-| catboost_raw | num_lab_procedures | 0.014284 | 0.000077 | 5000 | 16 |
-| catboost_raw | A1Cresult | 0.013829 | 0.000760 | 5000 | 17 |
-| catboost_raw | metformin | 0.013813 | 0.000962 | 5000 | 18 |
-| catboost_raw | admission_type_id | 0.010782 | 0.000983 | 5000 | 19 |
-| catboost_raw | race | 0.006786 | 0.000473 | 5000 | 20 |
-| catboost_raw | gender | 0.005935 | -0.000733 | 5000 | 21 |
-| catboost_raw | glipizide | 0.005909 | -0.001613 | 5000 | 22 |
-| catboost_raw | max_glu_serum | 0.005450 | -0.000260 | 5000 | 23 |
-| catboost_raw | num_procedures | 0.004485 | 0.000078 | 5000 | 24 |
-| catboost_raw | glyburide-metformin | 0.004100 | 0.000027 | 5000 | 25 |
-| catboost_raw | glimepiride | 0.003855 | 0.000327 | 5000 | 26 |
-| catboost_raw | tolazamide | 0.003774 | -0.000216 | 5000 | 27 |
-| catboost_raw | rosiglitazone | 0.003522 | 0.000077 | 5000 | 28 |
-| catboost_raw | nateglinide | 0.003507 | 0.000270 | 5000 | 29 |
-| catboost_raw | repaglinide | 0.003462 | -0.000491 | 5000 | 30 |
-| catboost_raw | acarbose | 0.003454 | 0.000475 | 5000 | 31 |
-| catboost_raw | pioglitazone | 0.003350 | -0.000887 | 5000 | 32 |
-| catboost_raw | miglitol | 0.003186 | -0.000054 | 5000 | 33 |
-| catboost_raw | glyburide | 0.003132 | 0.000272 | 5000 | 34 |
-| catboost_raw | chlorpropamide | 0.002743 | -0.000489 | 5000 | 35 |
-| catboost_raw | number_outpatient | 0.002469 | 0.000040 | 5000 | 36 |
-| catboost_raw | change | 0.001255 | -0.000083 | 5000 | 37 |
-| catboost_raw | tolbutamide | 0.000014 | 0.000010 | 5000 | 38 |
-| catboost_raw | metformin-rosiglitazone | 0.000003 | -0.000003 | 5000 | 39 |
-| catboost_raw | glipizide-metformin | 0.000001 | -0.000001 | 5000 | 40 |
-| catboost_raw | troglitazone | 0.000001 | -0.000001 | 5000 | 41 |
-| catboost_raw | acetohexamide | 0.000000 | 0.000000 | 5000 | 42 |
-| catboost_raw | glimepiride-pioglitazone | 0.000000 | -0.000000 | 5000 | 43 |
-| catboost_raw | metformin-pioglitazone | 0.000000 | -0.000000 | 5000 | 44 |
-| catboost_raw | examide | 0.000000 | 0.000000 | 5000 | 45 |
-| catboost_raw | citoglipton | 0.000000 | 0.000000 | 5000 | 46 |
-| ccs_meps_refit_hgb | number_inpatient | 0.290321 | -0.003128 | 5000 | 1 |
-| ccs_meps_refit_hgb | discharge_disposition_id | 0.205978 | -0.002094 | 5000 | 2 |
-| ccs_meps_refit_hgb | number_diagnoses | 0.046228 | 0.003183 | 5000 | 3 |
-| ccs_meps_refit_hgb | diabetesMed | 0.040975 | 0.000598 | 5000 | 4 |
-| ccs_meps_refit_hgb | meps_ccs_revisit_mean | 0.040843 | 0.000554 | 5000 | 5 |
-| ccs_meps_refit_hgb | diag_1 | 0.040409 | 0.000153 | 5000 | 6 |
-| ccs_meps_refit_hgb | payer_code | 0.036471 | -0.003819 | 5000 | 7 |
-| ccs_meps_refit_hgb | age | 0.036327 | 0.001131 | 5000 | 8 |
-| ccs_meps_refit_hgb | number_emergency | 0.034815 | 0.000739 | 5000 | 9 |
-| ccs_meps_refit_hgb | time_in_hospital | 0.029493 | 0.003137 | 5000 | 10 |
-| ccs_meps_refit_hgb | num_medications | 0.025879 | -0.000826 | 5000 | 11 |
-| ccs_meps_refit_hgb | medical_specialty | 0.025641 | -0.001282 | 5000 | 12 |
-| ccs_meps_refit_hgb | diag_3 | 0.024339 | 0.000389 | 5000 | 13 |
-| ccs_meps_refit_hgb | num_lab_procedures | 0.019694 | 0.000493 | 5000 | 14 |
-| ccs_meps_refit_hgb | ccs_diag_3 | 0.019164 | 0.000846 | 5000 | 15 |
-| ccs_meps_refit_hgb | diag_2 | 0.019043 | 0.000717 | 5000 | 16 |
-| ccs_meps_refit_hgb | A1Cresult | 0.018970 | -0.000316 | 5000 | 17 |
-| ccs_meps_refit_hgb | metformin | 0.018713 | -0.000057 | 5000 | 18 |
-| ccs_meps_refit_hgb | insulin | 0.018501 | 0.000553 | 5000 | 19 |
-| ccs_meps_refit_hgb | ccs_diag_2 | 0.016058 | 0.000660 | 5000 | 20 |
-| ccs_meps_refit_hgb | meps_ccs_readmit_mean | 0.015001 | 0.000808 | 5000 | 21 |
-| ccs_meps_refit_hgb | ccs_diag_1 | 0.014087 | -0.000238 | 5000 | 22 |
-| ccs_meps_refit_hgb | admission_source_id | 0.011133 | 0.001137 | 5000 | 23 |
-| ccs_meps_refit_hgb | admission_type_id | 0.010081 | 0.000341 | 5000 | 24 |
-| ccs_meps_refit_hgb | meps_ccs_readmit_max | 0.008843 | 0.000265 | 5000 | 25 |
-| ccs_meps_refit_hgb | number_outpatient | 0.006055 | 0.000581 | 5000 | 26 |
-| ccs_meps_refit_hgb | race | 0.006020 | 0.000289 | 5000 | 27 |
-| ccs_meps_refit_hgb | num_procedures | 0.005631 | 0.000641 | 5000 | 28 |
-| ccs_meps_refit_hgb | gender | 0.003572 | -0.000056 | 5000 | 29 |
-| ccs_meps_refit_hgb | meps_ccs_revisit_max | 0.003210 | 0.000103 | 5000 | 30 |
-| ccs_meps_refit_hgb | glipizide | 0.003044 | -0.000235 | 5000 | 31 |
-| ccs_meps_refit_hgb | glimepiride | 0.002842 | 0.000090 | 5000 | 32 |
-| ccs_meps_refit_hgb | change | 0.002271 | 0.000001 | 5000 | 33 |
-| ccs_meps_refit_hgb | pioglitazone | 0.001908 | -0.000034 | 5000 | 34 |
-| ccs_meps_refit_hgb | glyburide | 0.001534 | -0.000115 | 5000 | 35 |
-| ccs_meps_refit_hgb | max_glu_serum | 0.001081 | 0.000031 | 5000 | 36 |
-| ccs_meps_refit_hgb | rosiglitazone | 0.000952 | -0.000057 | 5000 | 37 |
-| ccs_meps_refit_hgb | repaglinide | 0.000284 | 0.000019 | 5000 | 38 |
-| ccs_meps_refit_hgb | acarbose | 0.000250 | 0.000052 | 5000 | 39 |
-| ccs_meps_refit_hgb | chlorpropamide | 0.000231 | -0.000095 | 5000 | 40 |
-| ccs_meps_refit_hgb | nateglinide | 0.000099 | -0.000026 | 5000 | 41 |
-| ccs_meps_refit_hgb | glyburide-metformin | 0.000087 | -0.000018 | 5000 | 42 |
-| ccs_meps_refit_hgb | acetohexamide | 0.000000 | 0.000000 | 5000 | 43 |
-| ccs_meps_refit_hgb | tolbutamide | 0.000000 | 0.000000 | 5000 | 44 |
-| ccs_meps_refit_hgb | miglitol | 0.000000 | 0.000000 | 5000 | 45 |
-| ccs_meps_refit_hgb | troglitazone | 0.000000 | 0.000000 | 5000 | 46 |
-| ccs_meps_refit_hgb | tolazamide | 0.000000 | 0.000000 | 5000 | 47 |
-| ccs_meps_refit_hgb | examide | 0.000000 | 0.000000 | 5000 | 48 |
-| ccs_meps_refit_hgb | citoglipton | 0.000000 | 0.000000 | 5000 | 49 |
-| ccs_meps_refit_hgb | glipizide-metformin | 0.000000 | 0.000000 | 5000 | 50 |
-| ccs_meps_refit_hgb | glimepiride-pioglitazone | 0.000000 | 0.000000 | 5000 | 51 |
-| ccs_meps_refit_hgb | metformin-rosiglitazone | 0.000000 | 0.000000 | 5000 | 52 |
-| ccs_meps_refit_hgb | metformin-pioglitazone | 0.000000 | 0.000000 | 5000 | 53 |
+模型設定：CatBoost CPU、原有 46 個出院時特徵、`depth` 4／6、`iterations` 250／500／750、learning rate 0.035、L2 5／15；內層每個 outer train 用 20% 病人互斥驗證，按 AP 選參，tie-break Brier；最終全 outer train 重訓。詳細設定見 [CatBoost 消融設定](results/final_presentation_completion/catboost_ablation_run.json)，原始模型設定見 [論文比較設定](results/paper_fair_comparison_seed777/run.json)。
+
+# 延伸實驗與歷史紀錄
+
+以下保留先前已完成的其他五折方法，包括 NHANES、不同 seed 與 99,340 筆舊隊列。這些結果供方法歷程查閱；不同隊列、切分或門檻策略不得與前述正式主表直接排名。重複的核心模型以最前方的最新 OOF 重算表為準。
+
+## 先前論文復現、標準基線與外部資料延伸
+
+下表均屬近期相同五折，六項指標使用同一個最高 10% 警示規則；重複的 OOF 機率只列一次。論文方法的 `bhuvan_hgb` 是在**本專題五折**重跑的復現對照，不是搬用論文單次測試數字。
+
+### 論文復現、CatBoost 與 MEPS 融合
+
+| Experiment | Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | ccs_only_catboost_raw_50 | 0.247374 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 | 0.245932 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | ccs_only_catboost_50 | 0.247337 | 0.681428 | 0.287815 | 0.252606 | 0.269063 | 0.095093 | 0.246005 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | ccs_meps_catboost_50 | 0.247140 | 0.681210 | 0.288318 | 0.253048 | 0.269534 | 0.095118 | 0.245854 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | ccs_meps_catboost_raw_50 | 0.247139 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 | 0.245889 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | catboost_raw | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 | 0.245430 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | catboost_family | 0.244454 | 0.677482 | 0.284089 | 0.249336 | 0.265580 | 0.095233 | 0.243281 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | bhuvan_hgb_catboost_50 | 0.241891 | 0.677469 | 0.283082 | 0.248451 | 0.264638 | 0.095395 | 0.240679 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | ccs_only_hgb | 0.239179 | 0.678333 | 0.284491 | 0.249688 | 0.265956 | 0.095470 | 0.237823 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | ccs_meps_group_hgb | 0.239077 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 | 0.238043 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | roy_hgb_46 | 0.237261 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 | 0.235940 |
+| [paper_fair_comparison_seed777](results/paper_fair_comparison_seed777/summary.csv) | bhuvan_hgb | 0.228703 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 | 0.227821 |
+
+
+同一折病人配對 bootstrap 顯示，`catboost_raw` 相對 `ccs_only_hgb` 的平均 AP 差為 **+0.007327**（95% CI **[+0.004039, +0.010484]**）。但 `ccs_meps_catboost_50` 相對同架構 `ccs_only_catboost_50` 為 **−0.000197**（95% CI **[−0.001026, +0.000604]**），加入 MEPS 的額外增益未獲證實。[配對分析](results/paper_fair_comparison_seed777/paired_ap_bootstrap.csv)。
+
+### LR、RF、XGBoost 與類別不平衡
+
+| Experiment | Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | xgb_standard | 0.230520 | 0.673929 | 0.273817 | 0.240320 | 0.255977 | 0.095958 | 0.229276 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | rf_standard | 0.222174 | 0.670451 | 0.267976 | 0.235194 | 0.250517 | 0.098313 | 0.221440 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | xgb_weighted | 0.221244 | 0.668693 | 0.263041 | 0.230865 | 0.245905 | 0.224077 | 0.218146 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | lr_standard | 0.212744 | 0.656468 | 0.261128 | 0.229185 | 0.244116 | 0.097284 | 0.212099 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | lr_balanced | 0.210895 | 0.654575 | 0.258107 | 0.226534 | 0.241292 | 0.220178 | 0.210451 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | xgb_smotenc_020 | 0.206220 | 0.645952 | 0.244310 | 0.214424 | 0.228394 | 0.097684 | 0.205295 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | rf_balanced | 0.202444 | 0.664644 | 0.242900 | 0.213186 | 0.227075 | 0.226550 | 0.201813 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | xgb_smotenc_035 | 0.196266 | 0.630477 | 0.241793 | 0.212213 | 0.226039 | 0.099883 | 0.195528 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | xgb_smotenc_050 | 0.186172 | 0.614392 | 0.238066 | 0.208944 | 0.222556 | 0.104912 | 0.183114 |
+| [classic_5fold_recheck_seed777](results/classic_5fold_recheck_seed777/summary.csv) | xgb_smotenc_100 | 0.171574 | 0.592494 | 0.237563 | 0.208501 | 0.222085 | 0.137953 | 0.171553 |
+
+標準 XGBoost 對標準 RF、標準 LR 的平均 AP 差依序為 +0.008345、+0.017776；加權 XGBoost 相對標準 XGBoost 為 −0.009276。SMOTENC 的 0.20、0.35、0.50、1.00 比例越高，AP 依序約 0.206、0.196、0.186、0.172。加權 LR／RF／XGBoost 的 Brier 約 0.22，直接輸出的機率沒有良好校準。
+
+### MEPS＋NHANES 雙來源與 30 天共同訓練
+
+| Experiment | Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [meps_30d_joint_transfer_seed777](results/meps_30d_joint_transfer_seed777/summary.csv) | group_teacher_catboost_hgb50 | 0.247038 | 0.683300 | 0.288218 | 0.252959 | 0.269440 | 0.095077 | 0.245591 |
+| [meps_30d_joint_transfer_seed777](results/meps_30d_joint_transfer_seed777/summary.csv) | group_teacher_catboost | 0.246291 | 0.682596 | 0.285498 | 0.250572 | 0.266898 | 0.095091 | 0.245139 |
+| [meps_30d_joint_transfer_seed777](results/meps_30d_joint_transfer_seed777/summary.csv) | joint_meps_30d_catboost50 | 0.239537 | 0.680805 | 0.283686 | 0.248983 | 0.265204 | 0.095406 | 0.238232 |
+| [meps_30d_joint_transfer_seed777](results/meps_30d_joint_transfer_seed777/summary.csv) | uci_only_nn_catboost50 | 0.238045 | 0.680662 | 0.280262 | 0.245978 | 0.262003 | 0.095510 | 0.236593 |
+| [meps_30d_joint_transfer_seed777](results/meps_30d_joint_transfer_seed777/summary.csv) | joint_meps_30d | 0.219264 | 0.665757 | 0.263746 | 0.231482 | 0.246563 | 0.097049 | 0.217643 |
+| [meps_30d_joint_transfer_seed777](results/meps_30d_joint_transfer_seed777/summary.csv) | uci_only_nn | 0.216620 | 0.664481 | 0.263243 | 0.231040 | 0.246093 | 0.097245 | 0.214873 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | multitask_dual_catboost_raw50 | 0.246877 | 0.683299 | 0.287613 | 0.252429 | 0.268875 | 0.095096 | 0.245526 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | multitask_meps_catboost_raw50 | 0.246751 | 0.683111 | 0.288922 | 0.253578 | 0.270099 | 0.095096 | 0.245309 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | multitask_nhanes_catboost_raw50 | 0.246684 | 0.683311 | 0.288218 | 0.252960 | 0.269440 | 0.095099 | 0.245349 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | grouping_nhanes_catboost_raw50 | 0.246682 | 0.683301 | 0.288419 | 0.253136 | 0.269628 | 0.095095 | 0.245270 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | grouping_dual_catboost_raw50 | 0.246639 | 0.683150 | 0.287311 | 0.252164 | 0.268593 | 0.095102 | 0.245246 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | grouping_meps_catboost_raw50 | 0.246614 | 0.683273 | 0.287513 | 0.252341 | 0.268781 | 0.095096 | 0.245265 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | multitask_dual | 0.238303 | 0.677964 | 0.281269 | 0.246861 | 0.262944 | 0.095536 | 0.236917 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | grouping_nhanes | 0.237939 | 0.678102 | 0.284592 | 0.249778 | 0.266051 | 0.095526 | 0.236756 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | multitask_nhanes | 0.237839 | 0.677914 | 0.281772 | 0.247303 | 0.263415 | 0.095541 | 0.236538 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | grouping_dual | 0.237757 | 0.677639 | 0.279859 | 0.245623 | 0.261626 | 0.095551 | 0.236425 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | multitask_meps | 0.237703 | 0.677568 | 0.281974 | 0.247480 | 0.263603 | 0.095547 | 0.236463 |
+| [meps_nhanes_dual_external_seed777](results/meps_nhanes_dual_external_seed777/summary.csv) | grouping_meps | 0.237652 | 0.678020 | 0.280765 | 0.246418 | 0.262473 | 0.095536 | 0.236549 |
+
+外部 30 天共同訓練 `joint_meps_30d` 相對 `uci_only_nn` 的平均 AP 差 **+0.002644**，病人配對 bootstrap 95% CI **[+0.000035, +0.005273]**；加上 CatBoost 後仍低於最佳 CCS-only 融合。雙來源最佳融合的增益相對最佳 CCS-only 融合未獲證實。[配對檔](results/meps_30d_joint_transfer_seed777/paired_ap_bootstrap.csv)、[雙來源結果](results/meps_nhanes_dual_external_seed777/summary.csv)。
+
+## 近期同切分其餘完整五折實驗
+
+包含 CDC、MEPS 年度利用率／事件、CCS 群組、殘差校正、外部來源擴充等不同接法。每列均是該實驗的**獨立預測**；完全相同的 OOF 控制組已去重。數字使用與主表相同的六項指標計算。
+
+### [cdc_clinical_interpretability_results](results/cdc_clinical_interpretability_results/summary.csv)
+
+CDC 健康指標加到醫院臨床特徵，另做單一健康欄位移除／保留控制與 SHAP。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| E4_Clinical_CDCHealth | 0.235256 | 0.678403 | 0.276939 | 0.243060 | 0.258896 | 0.095640 | 0.233950 |
+| Only_DiffWalk | 0.235084 | 0.678039 | 0.277039 | 0.243148 | 0.258990 | 0.095663 | 0.233638 |
+| E2_Clinical | 0.234919 | 0.678280 | 0.276334 | 0.242530 | 0.258331 | 0.095664 | 0.233694 |
+| E1_Baseline | 0.234825 | 0.676851 | 0.276234 | 0.242442 | 0.258237 | 0.095689 | 0.233800 |
+| No_PhysHlth | 0.234816 | 0.677879 | 0.274924 | 0.241292 | 0.257012 | 0.095663 | 0.233639 |
+| No_GenHlth | 0.234706 | 0.677794 | 0.276234 | 0.242441 | 0.258237 | 0.095673 | 0.233353 |
+| Only_GenHlth | 0.234560 | 0.678319 | 0.277241 | 0.243325 | 0.259178 | 0.095671 | 0.233461 |
+| Only_PhysHlth | 0.234338 | 0.677868 | 0.278751 | 0.244651 | 0.260590 | 0.095687 | 0.233243 |
+| No_DiffWalk | 0.234110 | 0.677909 | 0.274824 | 0.241204 | 0.256919 | 0.095693 | 0.232991 |
+
+### [cdc_diffwalk_control_results](results/cdc_diffwalk_control_results/summary.csv)
+
+對 CDC 行動困難 DiffWalk 做真實值、置換值及全部健康指標控制。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Permuted_DiffWalk | 0.235028 | 0.678541 | 0.274622 | 0.241026 | 0.256730 | 0.095662 | 0.233750 |
+
+### [meps_augmented_hgb_seed777](results/meps_augmented_hgb_seed777/summary.csv)
+
+把 MEPS 風險特徵直接加到醫院 HGB，對照既有 HGB 和固定融合。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ensemble_fixed_50 | 0.237485 | 0.678561 | 0.279456 | 0.245270 | 0.261249 | 0.096527 | 0.231596 |
+| hgb_tuned | 0.237247 | 0.676933 | 0.279557 | 0.245358 | 0.261343 | 0.095573 | 0.235987 |
+| hgb_meps_augmented | 0.236877 | 0.675689 | 0.277442 | 0.243502 | 0.259366 | 0.095612 | 0.235749 |
+
+### [meps_bridge8_results](results/meps_bridge8_results/summary.csv)
+
+以年齡、性別、疾病等 Bridge8 共享變數接 MEPS ER／住院利用率。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Direct8_MEPS_Both8 | 0.235585 | 0.678829 | 0.274622 | 0.241027 | 0.256730 | 0.095632 | 0.234141 |
+| Direct_Bridge8 | 0.235104 | 0.678881 | 0.276838 | 0.242972 | 0.258802 | 0.095644 | 0.233891 |
+| MEPS_IP_8 | 0.234870 | 0.678401 | 0.278147 | 0.244120 | 0.260025 | 0.095655 | 0.233695 |
+| MEPS_ER_8 | 0.234828 | 0.678292 | 0.275629 | 0.241911 | 0.257672 | 0.095668 | 0.233689 |
+| MEPS_Both_8 | 0.234393 | 0.677959 | 0.276737 | 0.242883 | 0.258707 | 0.095676 | 0.233244 |
+
+### [meps_ccs_group_hgb_seed777](results/meps_ccs_group_hgb_seed777/summary.csv)
+
+把 MEPS 次年利用率依 AHRQ CCS 疾病群組彙整，再加到 HGB。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ccs_meps_group_hgb | 0.238943 | 0.678128 | 0.281672 | 0.247213 | 0.263320 | 0.095482 | 0.237537 |
+
+### [meps_cell_results](results/meps_cell_results/summary.csv)
+
+以人口與健康／利用率 cell 匹配 MEPS 的群組風險。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Direct_Demog | 0.235160 | 0.679216 | 0.277140 | 0.243237 | 0.259084 | 0.095640 | 0.233749 |
+| Cell_All | 0.235131 | 0.677912 | 0.277845 | 0.243855 | 0.259743 | 0.095679 | 0.233655 |
+| Cell_Health | 0.234925 | 0.678129 | 0.276737 | 0.242883 | 0.258707 | 0.095669 | 0.233690 |
+| Cell_ERIP | 0.234824 | 0.677980 | 0.276435 | 0.242618 | 0.258425 | 0.095669 | 0.233733 |
+| Cell_Util | 0.234399 | 0.677707 | 0.277744 | 0.243767 | 0.259649 | 0.095694 | 0.233265 |
+| Direct_Demog_Cell_All | 0.234250 | 0.678035 | 0.276234 | 0.242441 | 0.258237 | 0.095705 | 0.233012 |
+
+### [meps_event_ccs_soft_seed777](results/meps_event_ccs_soft_seed777/summary.csv)
+
+以 ICD 前綴及上層群組平滑 MEPS 事件 CCS 訊號，含置換控制。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ccs_meps_soft_hgb | 0.237349 | 0.676970 | 0.280463 | 0.246154 | 0.262191 | 0.095575 | 0.235961 |
+| ccs_meps_soft_shuffled | 0.234799 | 0.675568 | 0.278449 | 0.244385 | 0.260307 | 0.095712 | 0.233799 |
+
+### [meps_event_rank_correction_seed777](results/meps_event_rank_correction_seed777/summary.csv)
+
+只對較高風險患者套用 MEPS 事件排名校正，另比較固定與驗證集門控強度。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fixed_ccs_hgb | 0.238865 | 0.677766 | 0.280967 | 0.246596 | 0.262662 | 0.095508 | 0.237699 |
+| meps_rank_gated | 0.238734 | 0.677816 | 0.281974 | 0.247480 | 0.263603 | 0.095517 | 0.237446 |
+| meps_rank_fixed_025 | 0.238504 | 0.677879 | 0.282779 | 0.248187 | 0.264356 | 0.095511 | 0.237380 |
+
+### [meps_group_prior_hgb_seed777](results/meps_group_prior_hgb_seed777/summary.csv)
+
+比較醫院內部疾病群組先驗與 MEPS 事件群組先驗。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| hospital_group_prior | 0.237010 | 0.677386 | 0.279053 | 0.244916 | 0.260872 | 0.095609 | 0.235537 |
+| meps_group_prior | 0.235659 | 0.677995 | 0.278751 | 0.244651 | 0.260590 | 0.095629 | 0.234655 |
+
+### [meps_harmonized_weighted_residual_seed777](results/meps_harmonized_weighted_residual_seed777/summary.csv)
+
+以醫院與 MEPS 分布權重調整外部風險，再校正 HGB 殘差。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| meps_residual | 0.237102 | 0.676994 | 0.279255 | 0.245093 | 0.261061 | 0.095566 | 0.235777 |
+
+### [meps_hgb_results](results/meps_hgb_results/summary.csv)
+
+HGB 基線與加入 MEPS 風險的 HGB。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Clinical_HGB | 0.235741 | 0.674921 | 0.276334 | 0.242531 | 0.258331 | 0.095676 | 0.234761 |
+| MEPS_HGB | 0.235495 | 0.674701 | 0.277644 | 0.243680 | 0.259555 | 0.095697 | 0.234354 |
+
+### [meps_multitask_results](results/meps_multitask_results/summary.csv)
+
+UCI 與 MEPS 多任務學習、預訓練及醫院 MLP 對照。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MEPS_Multitask | 0.223721 | 0.671323 | 0.267674 | 0.234928 | 0.250234 | 0.096493 | 0.220328 |
+| MEPS_Pretrained | 0.222629 | 0.672212 | 0.268379 | 0.235548 | 0.250894 | 0.096483 | 0.218811 |
+| UCI_MLP | 0.222066 | 0.670126 | 0.267875 | 0.235106 | 0.250423 | 0.096756 | 0.216965 |
+
+### [meps_nested_hgb_blend_seed777](results/meps_nested_hgb_blend_seed777/summary.csv)
+
+內層驗證挑 HGB、MEPS XGBoost 與融合權重。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ensemble_nested | 0.237015 | 0.678132 | 0.278751 | 0.244651 | 0.260590 | 0.096766 | 0.228183 |
+| xgb_meps_tuned | 0.234601 | 0.677285 | 0.275932 | 0.242177 | 0.257955 | 0.099983 | 0.219631 |
+
+### [meps_residual_correction_seed777](results/meps_residual_correction_seed777/summary.csv)
+
+用 MEPS 外部風險對醫院 HGB 預測做殘差校正。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| meps_residual | 0.237245 | 0.676987 | 0.279355 | 0.245182 | 0.261155 | 0.095565 | 0.235877 |
+
+### [meps_utilization_results](results/meps_utilization_results/summary.csv)
+
+比較 MEPS 2、6、8 年期 ER／住院利用率訊號。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MEPS_Both_2 | 0.234983 | 0.678269 | 0.276838 | 0.242972 | 0.258802 | 0.095661 | 0.233688 |
+| MEPS_ER_6 | 0.234431 | 0.678490 | 0.278046 | 0.244032 | 0.259931 | 0.095670 | 0.233367 |
+| MEPS_IP_2 | 0.234324 | 0.678265 | 0.276334 | 0.242530 | 0.258331 | 0.095680 | 0.233215 |
+| MEPS_ER_2 | 0.234271 | 0.678457 | 0.277341 | 0.243414 | 0.259272 | 0.095685 | 0.233036 |
+| MEPS_IP_6 | 0.234257 | 0.678135 | 0.276234 | 0.242441 | 0.258236 | 0.095686 | 0.233034 |
+| MEPS_Both_6 | 0.234199 | 0.677947 | 0.274320 | 0.240762 | 0.256448 | 0.095681 | 0.233061 |
+
+### [real_external_sources_hgb_seed777](results/real_external_sources_hgb_seed777/summary.csv)
+
+擴大 MEPS 年份，並加入 NHANES 糖尿病住院訊號。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ccs_meps_extended_hgb | 0.238625 | 0.676461 | 0.282377 | 0.247833 | 0.263980 | 0.095546 | 0.237371 |
+| ccs_meps_nhanes_hgb | 0.238111 | 0.676110 | 0.280463 | 0.246154 | 0.262191 | 0.095577 | 0.236977 |
+| ccs_nhanes_hgb | 0.237414 | 0.676730 | 0.278248 | 0.244209 | 0.260119 | 0.095599 | 0.236131 |
+
+## 較早 99,340 筆隊列的完整五折實驗
+
+這些仍是病人互斥五折，主要涵蓋 MEPS 縱向預訓練、風險融合與事件遷移；但隊列少 3 筆且折別與近期主表不同，**只在本節內描述**。全部從完整 OOF 以相同最高 10% 警示規則重算六項指標；不直接拿來和 99,343 筆表判斷勝負。
+
+### [meps_embedding_tuned_results](results/meps_embedding_tuned_results/summary.csv)
+
+調整 MEPS embedding 對醫院 XGBoost 的輸入方式。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| clinical | 0.209449 | 0.651929 | 0.246123 | 0.216014 | 0.230088 | 0.097207 | 0.208555 |
+| multitask_tuned | 0.208415 | 0.649419 | 0.246626 | 0.216457 | 0.230559 | 0.097290 | 0.207296 |
+
+### [meps_embedding_xgb_results](results/meps_embedding_xgb_results/summary.csv)
+
+比較 MEPS 預訓練、多任務、隨機與置換 embedding 的 XGBoost。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| clinical | 0.209917 | 0.652887 | 0.246626 | 0.216456 | 0.230559 | 0.097167 | 0.208976 |
+| multitask | 0.209831 | 0.651765 | 0.246727 | 0.216545 | 0.230653 | 0.097193 | 0.208744 |
+| pretrained | 0.209534 | 0.650341 | 0.246022 | 0.215927 | 0.229994 | 0.097239 | 0.208336 |
+| random | 0.209019 | 0.650207 | 0.246928 | 0.216722 | 0.230841 | 0.097265 | 0.207953 |
+| shuffled | 0.208424 | 0.649162 | 0.247432 | 0.217164 | 0.231312 | 0.097310 | 0.207299 |
+
+### [meps_event_blend_results](results/meps_event_blend_results/summary.csv)
+
+MEPS 事件風險與臨床 XGBoost 做固定或驗證集融合，含置換控制。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_shuffled | 0.209914 | 0.652886 | 0.246727 | 0.216545 | 0.230653 | 0.097173 | 0.208991 |
+| blend_event | 0.209904 | 0.652868 | 0.246928 | 0.216721 | 0.230841 | 0.097720 | 0.204519 |
+| blend_random | 0.209852 | 0.652761 | 0.246727 | 0.216545 | 0.230653 | 0.097399 | 0.206142 |
+| risk_shuffled | 0.117641 | 0.513900 | 0.118933 | 0.104385 | 0.111185 | 0.100902 | 0.117366 |
+| risk_random | 0.115894 | 0.502536 | 0.116818 | 0.102528 | 0.109207 | 0.100920 | 0.115619 |
+| risk_event | 0.111573 | 0.494876 | 0.103122 | 0.090506 | 0.096403 | 0.100923 | 0.112712 |
+
+### [meps_event_transfer_results](results/meps_event_transfer_results/summary.csv)
+
+以 MEPS 日期事件預訓練風險網路，再遷移至醫院主模型。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| event_pretrained | 0.208973 | 0.651108 | 0.247130 | 0.216899 | 0.231030 | 0.097233 | 0.208039 |
+| event_shuffled | 0.208450 | 0.649511 | 0.247029 | 0.216810 | 0.230935 | 0.097332 | 0.207079 |
+| random_risk | 0.208354 | 0.649362 | 0.245217 | 0.215219 | 0.229241 | 0.097327 | 0.207193 |
+
+### [meps_longitudinal_aligned_results](results/meps_longitudinal_aligned_results/summary.csv)
+
+MEPS 相鄰年度對齊的預訓練／多任務編碼器。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| aligned_pretrained | 0.201978 | 0.644105 | 0.239275 | 0.210004 | 0.223686 | 0.097624 | 0.201336 |
+| aligned_mtl | 0.201502 | 0.643669 | 0.240483 | 0.211065 | 0.224816 | 0.097639 | 0.201378 |
+| aligned_shuffled_mtl | 0.201338 | 0.644054 | 0.242800 | 0.213098 | 0.226981 | 0.097648 | 0.199808 |
+| uci_only | 0.200808 | 0.643094 | 0.241893 | 0.212303 | 0.226134 | 0.097686 | 0.198996 |
+
+### [meps_longitudinal_blend_2008_2016_results](results/meps_longitudinal_blend_2008_2016_results/summary.csv)
+
+把縱向融合使用的 MEPS 年份擴至 2016。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_mtl | 0.210137 | 0.653321 | 0.247533 | 0.217252 | 0.231406 | 0.097168 | 0.208953 |
+| blend_shuffled_mtl | 0.209495 | 0.652127 | 0.247633 | 0.217340 | 0.231500 | 0.097223 | 0.208337 |
+| risk_shuffled_mtl | 0.207694 | 0.648863 | 0.246022 | 0.215926 | 0.229994 | 0.097359 | 0.206169 |
+| risk_mtl | 0.205451 | 0.646798 | 0.244612 | 0.214688 | 0.228675 | 0.097748 | 0.200624 |
+
+### [meps_longitudinal_blend_2008_2024_results](results/meps_longitudinal_blend_2008_2024_results/summary.csv)
+
+把縱向融合使用的 MEPS 年份擴至 2024。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_mtl | 0.210002 | 0.653402 | 0.248338 | 0.217959 | 0.232159 | 0.097150 | 0.209156 |
+| blend_shuffled_mtl | 0.209985 | 0.652837 | 0.247231 | 0.216986 | 0.231123 | 0.097177 | 0.208927 |
+| risk_mtl | 0.209245 | 0.651656 | 0.245217 | 0.215219 | 0.229241 | 0.097190 | 0.208349 |
+| risk_shuffled_mtl | 0.208178 | 0.649793 | 0.245217 | 0.215219 | 0.229241 | 0.097291 | 0.206947 |
+
+### [meps_longitudinal_blend_ensemble_results](results/meps_longitudinal_blend_ensemble_results/summary.csv)
+
+將多個縱向風險模型的 OOF 融合。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_mtl | 0.210191 | 0.652903 | 0.248640 | 0.218224 | 0.232441 | 0.097173 | 0.209136 |
+| blend_shuffled_mtl | 0.210061 | 0.652006 | 0.247533 | 0.217252 | 0.231406 | 0.097214 | 0.208784 |
+| clinical | 0.210040 | 0.652528 | 0.247633 | 0.217340 | 0.231500 | 0.097187 | 0.208949 |
+| risk_mtl | 0.209857 | 0.651497 | 0.247734 | 0.217429 | 0.231594 | 0.097197 | 0.208792 |
+| risk_shuffled_mtl | 0.209752 | 0.650901 | 0.245821 | 0.215750 | 0.229806 | 0.097252 | 0.208488 |
+
+### [meps_longitudinal_blend_results](results/meps_longitudinal_blend_results/summary.csv)
+
+2008–2012 MEPS 縱向多任務風險與醫院 XGBoost 融合，含置換控制。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_mtl | 0.210155 | 0.653002 | 0.246727 | 0.216545 | 0.230653 | 0.097154 | 0.209250 |
+| risk_mtl | 0.209609 | 0.650839 | 0.245116 | 0.215130 | 0.229146 | 0.097209 | 0.208497 |
+| blend_shuffled_mtl | 0.209519 | 0.651896 | 0.245921 | 0.215837 | 0.229899 | 0.097278 | 0.207807 |
+| risk_shuffled_mtl | 0.206810 | 0.647995 | 0.244411 | 0.214513 | 0.228488 | 0.097502 | 0.204225 |
+
+### [meps_longitudinal_blend_seed2024](results/meps_longitudinal_blend_seed2024/summary.csv)
+
+同一 99,340 筆五折上換縱向模型隨機 seed。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_mtl | 0.210013 | 0.652869 | 0.246526 | 0.216367 | 0.230464 | 0.097177 | 0.208916 |
+| clinical | 0.209891 | 0.652392 | 0.246828 | 0.216633 | 0.230747 | 0.097189 | 0.208758 |
+| blend_shuffled_mtl | 0.209848 | 0.651703 | 0.248439 | 0.218047 | 0.232253 | 0.097211 | 0.208684 |
+| risk_shuffled_mtl | 0.209312 | 0.650094 | 0.247835 | 0.217518 | 0.231689 | 0.097248 | 0.208115 |
+| risk_mtl | 0.209046 | 0.650944 | 0.247130 | 0.216898 | 0.231029 | 0.097221 | 0.208024 |
+
+### [meps_longitudinal_blend_seed3407](results/meps_longitudinal_blend_seed3407/summary.csv)
+
+同一 99,340 筆五折上換縱向模型隨機 seed。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_shuffled_mtl | 0.209539 | 0.651316 | 0.247331 | 0.217076 | 0.231218 | 0.097225 | 0.208426 |
+| risk_shuffled_mtl | 0.209343 | 0.651117 | 0.247633 | 0.217341 | 0.231500 | 0.097218 | 0.208417 |
+| blend_mtl | 0.209302 | 0.651178 | 0.246526 | 0.216369 | 0.230465 | 0.097253 | 0.208108 |
+| clinical | 0.209068 | 0.650641 | 0.245619 | 0.215573 | 0.229617 | 0.097268 | 0.207895 |
+| risk_mtl | 0.208859 | 0.649754 | 0.246928 | 0.216722 | 0.230841 | 0.097262 | 0.207764 |
+
+### [meps_longitudinal_results](results/meps_longitudinal_results/summary.csv)
+
+早期 MEPS 縱向共享編碼器、預訓練及多任務模型的完整五折。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| longitudinal_mtl | 0.201473 | 0.643687 | 0.241793 | 0.212214 | 0.226040 | 0.097655 | 0.199854 |
+| direct_shared | 0.201459 | 0.643621 | 0.242598 | 0.212921 | 0.226793 | 0.097655 | 0.200067 |
+| pretrained | 0.201408 | 0.643759 | 0.239376 | 0.210093 | 0.223781 | 0.097647 | 0.199983 |
+| shuffled_mtl | 0.201383 | 0.643849 | 0.241490 | 0.211949 | 0.225758 | 0.097650 | 0.200117 |
+
+### [meps_longitudinal_risk_xgb_results](results/meps_longitudinal_risk_xgb_results/summary.csv)
+
+將 MEPS 縱向預訓練風險直接作 XGBoost 輸入。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| risk_shuffled | 0.209443 | 0.650575 | 0.245720 | 0.215662 | 0.229712 | 0.097235 | 0.208436 |
+| risk_mtl | 0.209375 | 0.650451 | 0.245619 | 0.215572 | 0.229617 | 0.097228 | 0.208295 |
+| risk_pretrained | 0.208722 | 0.649887 | 0.246123 | 0.216015 | 0.230088 | 0.097281 | 0.207747 |
+| risk_shuffled_mtl | 0.207466 | 0.648459 | 0.246224 | 0.216103 | 0.230182 | 0.097329 | 0.206574 |
+
+### [meps_longitudinal_tuned_blend_results](results/meps_longitudinal_tuned_blend_results/summary.csv)
+
+以驗證資料調整縱向風險與臨床預測的融合權重。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_mtl | 0.209894 | 0.653195 | 0.246425 | 0.216280 | 0.230370 | 0.097156 | 0.208990 |
+| blend_shuffled_mtl | 0.209557 | 0.651815 | 0.245821 | 0.215749 | 0.229805 | 0.097280 | 0.207812 |
+| risk_mtl | 0.209539 | 0.651656 | 0.245317 | 0.215307 | 0.229335 | 0.097175 | 0.208874 |
+| risk_shuffled_mtl | 0.207254 | 0.648163 | 0.243807 | 0.213982 | 0.227923 | 0.097487 | 0.204788 |
+
+### [meps_longitudinal_xgb_results](results/meps_longitudinal_xgb_results/summary.csv)
+
+比較 MEPS 對齊預訓練／多任務 embedding 與 XGBoost。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| random | 0.209416 | 0.650661 | 0.247029 | 0.216810 | 0.230935 | 0.097225 | 0.208403 |
+| aligned_mtl | 0.209080 | 0.652012 | 0.244814 | 0.214866 | 0.228864 | 0.097183 | 0.208129 |
+| aligned_pretrained | 0.208722 | 0.652186 | 0.243001 | 0.213275 | 0.227170 | 0.097182 | 0.207954 |
+| aligned_shuffled | 0.207800 | 0.649506 | 0.243202 | 0.213452 | 0.227358 | 0.097308 | 0.206971 |
+| aligned_shuffled_mtl | 0.207357 | 0.648704 | 0.245015 | 0.215042 | 0.229052 | 0.097348 | 0.206178 |
+
+### [meps_multisource_blend_results](results/meps_multisource_blend_results/summary.csv)
+
+合併 MEPS 年度縱向與住院事件外部任務。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| blend_shuffled | 0.209821 | 0.652792 | 0.249547 | 0.219019 | 0.233289 | 0.097279 | 0.207551 |
+| blend_event | 0.209600 | 0.652758 | 0.248036 | 0.217694 | 0.231877 | 0.097179 | 0.208616 |
+| risk_event | 0.208858 | 0.651500 | 0.246626 | 0.216457 | 0.230559 | 0.097208 | 0.207954 |
+| risk_shuffled | 0.206571 | 0.647581 | 0.243807 | 0.213982 | 0.227923 | 0.097564 | 0.202893 |
+
+## 其他 seed 與跨 seed OOF 平均
+
+以下每個 seed 各自完成病人互斥五折，卻不使用 seed 777 的相同測試折；跨 seed 平均則是逐筆多個 OOF 預測的平均。用來檢查穩定性，不併入主表排名。
+
+### 99,343 筆・其他 seed
+
+| Experiment | Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [meps_bridge8_seed2024](results/meps_bridge8_seed2024/summary.csv) | Direct8_MEPS_Both8 | 0.233741 | 0.677252 | 0.273964 | 0.240500 | 0.256144 | 0.095738 | 0.232652 |
+| [meps_bridge8_seed2024](results/meps_bridge8_seed2024/summary.csv) | Clinical | 0.232897 | 0.677103 | 0.274668 | 0.241118 | 0.256802 | 0.095777 | 0.231770 |
+| [meps_bridge8_seed3407](results/meps_bridge8_seed3407/summary.csv) | Direct8_MEPS_Both8 | 0.234106 | 0.677791 | 0.276709 | 0.242884 | 0.258696 | 0.095676 | 0.233724 |
+| [meps_bridge8_seed3407](results/meps_bridge8_seed3407/summary.csv) | Clinical | 0.233321 | 0.677429 | 0.277213 | 0.243326 | 0.259166 | 0.095716 | 0.232925 |
+| [meps_hgb_seed2024](results/meps_hgb_seed2024/summary.csv) | MEPS_HGB | 0.235867 | 0.673560 | 0.273764 | 0.240323 | 0.255956 | 0.095705 | 0.234758 |
+| [meps_hgb_seed2024](results/meps_hgb_seed2024/summary.csv) | Clinical_HGB | 0.235085 | 0.674264 | 0.275677 | 0.242002 | 0.257744 | 0.095719 | 0.234196 |
+| [meps_hgb_seed3407](results/meps_hgb_seed3407/summary.csv) | Clinical_HGB | 0.234257 | 0.673408 | 0.275199 | 0.241559 | 0.257284 | 0.095724 | 0.233925 |
+| [meps_hgb_seed3407](results/meps_hgb_seed3407/summary.csv) | MEPS_HGB | 0.232447 | 0.672528 | 0.272883 | 0.239526 | 0.255119 | 0.095811 | 0.231969 |
+
+### 跨 seed OOF 平均
+
+| Experiment | Model | AP | AUROC | Precision | Recall | F1 | Brier | Pooled_AP |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [meps_hgb_xgb_ensemble](results/meps_hgb_xgb_ensemble/summary.csv) | external | 0.239347 | 0.679698 | 0.278348 | 0.244297 | 0.260213 | 0.095458 | 0.238312 |
+| [meps_hgb_xgb_ensemble](results/meps_hgb_xgb_ensemble/summary.csv) | hgb | 0.239282 | 0.677475 | 0.280564 | 0.246242 | 0.262285 | 0.095497 | 0.238323 |
+| [meps_hgb_xgb_ensemble](results/meps_hgb_xgb_ensemble/summary.csv) | no_external | 0.238814 | 0.679395 | 0.279053 | 0.244916 | 0.260872 | 0.095484 | 0.237798 |
+| [meps_hgb_xgb_ensemble](results/meps_hgb_xgb_ensemble/summary.csv) | meps_xgb | 0.236293 | 0.679227 | 0.277442 | 0.243502 | 0.259367 | 0.095597 | 0.235077 |
+| [meps_hgb_xgb_ensemble](results/meps_hgb_xgb_ensemble/summary.csv) | clinical_xgb | 0.235498 | 0.678852 | 0.277442 | 0.243502 | 0.259366 | 0.095636 | 0.234410 |
+
+## CDC 摘要型五折實驗
+
+這些來源保存五折六項指標，但沒有可逐筆重算全部模型的 OOF；因此採原摘要的驗證集選門檻，Precision／Recall／F1 與上表的固定最高 10% 不同。重複的完全相同摘要行已去重。
+
+### [cdc_clinical_results](results/cdc_clinical_results/summary_mean_std.csv)
+
+CDC 健康與慢性病特徵加入醫院臨床模型，並與臨床基線比較。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| E4_Clinical_CDCHealth | 0.235256 | 0.678403 | 0.211719 | 0.465705 | 0.290461 | 0.095640 |
+| E2_Clinical | 0.234919 | 0.678280 | 0.221075 | 0.425836 | 0.290581 | 0.095664 |
+| E1_Baseline | 0.234825 | 0.676851 | 0.214922 | 0.452978 | 0.289849 | 0.095689 |
+| E3_Clinical_CDCScore | 0.234635 | 0.678024 | 0.212749 | 0.460127 | 0.289241 | 0.095671 |
+
+### [cdc_comorbidity_results](results/cdc_comorbidity_results/summary_mean_std.csv)
+
+將 CDC 共病相關資訊與醫院診斷特徵結合。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| E6_Health | 0.234924 | 0.677350 | 0.214946 | 0.455727 | 0.291403 | 0.095673 |
+| E3_Bridge6 | 0.234779 | 0.677566 | 0.213902 | 0.458635 | 0.289853 | 0.095673 |
+| E2_Bridge4 | 0.234671 | 0.677202 | 0.214929 | 0.452790 | 0.289653 | 0.095686 |
+| E5_PhysHlth | 0.234476 | 0.677225 | 0.221577 | 0.420624 | 0.288050 | 0.095691 |
+| E4_GenHlth | 0.234414 | 0.677361 | 0.213545 | 0.453423 | 0.289086 | 0.095694 |
+| E7_Socio | 0.234313 | 0.676898 | 0.218781 | 0.436799 | 0.290237 | 0.095710 |
+| E8_All_CDC | 0.234143 | 0.676969 | 0.218593 | 0.434771 | 0.289871 | 0.095703 |
+
+### [cdc_diagnosis_aware_results](results/cdc_diagnosis_aware_results/summary_mean_std.csv)
+
+以醫院診斷分組對齊 CDC 外部健康訊號。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| E5_NaiveHealth | 0.235246 | 0.676976 | 0.217931 | 0.435999 | 0.288823 | 0.095664 |
+| E6_DiagnosisAware | 0.235090 | 0.677077 | 0.219680 | 0.438483 | 0.290815 | 0.095666 |
+| E4_Bridge6 | 0.234877 | 0.677508 | 0.219591 | 0.437157 | 0.291282 | 0.095679 |
+| E7_AwarePlus | 0.234401 | 0.677100 | 0.213853 | 0.455979 | 0.289450 | 0.095691 |
+| E2_Reliable4 | 0.234401 | 0.677212 | 0.213044 | 0.461195 | 0.290165 | 0.095693 |
+| E3_ReliableHealth | 0.234343 | 0.677106 | 0.217920 | 0.433615 | 0.288423 | 0.095688 |
+
+### [cdc_distribution_alignment_results](results/cdc_distribution_alignment_results/summary_mean_std.csv)
+
+對 CDC 與醫院資料的分布差異做對齊，再比較主要任務表現。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| E4_Aligned_Health | 0.234849 | 0.677049 | 0.219511 | 0.427601 | 0.287714 | 0.095684 |
+| E5_Aligned_All | 0.233934 | 0.677015 | 0.217869 | 0.432914 | 0.288858 | 0.095721 |
+
+### [cdc_encoder_control_results](results/cdc_encoder_control_results/summary_mean_std.csv)
+
+比較 CDC 編碼器、置換控制與僅使用醫院資料的模型。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| Bridge | 0.232240 | 0.676257 | 0.224300 | 0.410454 | 0.286932 | 0.095789 |
+| RandomEncoder | 0.232117 | 0.676289 | 0.217220 | 0.437148 | 0.286181 | 0.095794 |
+| CDCPretrained | 0.232009 | 0.675971 | 0.217232 | 0.429993 | 0.287444 | 0.095807 |
+| RandomEncoder/ClassWeight2 | 0.231633 | 0.676147 | 0.213808 | 0.448465 | 0.287395 | 0.103313 |
+| Bridge/ClassWeight2 | 0.231605 | 0.676319 | 0.213830 | 0.454222 | 0.288439 | 0.103337 |
+| CDCPretrained/ClassWeight2 | 0.231487 | 0.676223 | 0.219118 | 0.438039 | 0.291067 | 0.103309 |
+| Bridge/ClassWeight4 | 0.230525 | 0.676179 | 0.214911 | 0.453075 | 0.289343 | 0.139456 |
+| CDCPretrained/ClassWeight4 | 0.230378 | 0.676047 | 0.216691 | 0.445029 | 0.289674 | 0.139361 |
+| RandomEncoder/ClassWeight4 | 0.230209 | 0.675919 | 0.214256 | 0.448111 | 0.288047 | 0.139401 |
+| RandomEncoder/SMOTENC | 0.222964 | 0.666958 | 0.207860 | 0.446791 | 0.283401 | 0.096536 |
+| Bridge/SMOTENC | 0.221204 | 0.665722 | 0.209831 | 0.436978 | 0.282771 | 0.096629 |
+| CDCPretrained/SMOTENC | 0.220695 | 0.664874 | 0.207098 | 0.439357 | 0.279347 | 0.096726 |
+
+### [cdc_encoder_cv_results](results/cdc_encoder_cv_results/summary_mean_std.csv)
+
+以五折驗證 CDC 編碼器轉移與臨床模型。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| E4_CDC_Combined | 0.234186 | 0.677256 | 0.218143 | 0.432205 | 0.289230 | 0.100255 |
+| E3_CDC_Embedding | 0.233726 | 0.677213 | 0.216956 | 0.439103 | 0.288280 | 0.097233 |
+| E2_CDC_Scores | 0.233266 | 0.676688 | 0.220614 | 0.421770 | 0.285793 | 0.114819 |
+| E1_Bridge | 0.232902 | 0.676819 | 0.214281 | 0.448821 | 0.288059 | 0.114814 |
+
+### [cdc_ih_5fold_results](results/cdc_ih_5fold_results/summary_mean_std.csv)
+
+比較 CDC 外部健康訊號在不同醫院特徵集合下的效果。
+
+| Model | AP | AUROC | Precision | Recall | F1 | Brier |
+|---|---:|---:|---:|---:|---:|---:|
+| CDC_All | 0.234544 | 0.677255 | 0.214605 | 0.457131 | 0.287679 | 0.095692 |
+| CDC_Multi | 0.233780 | 0.676580 | 0.218934 | 0.429640 | 0.288136 | 0.095735 |
+| Bridge/RUS | 0.232719 | 0.676112 | 0.210356 | 0.460843 | 0.287549 | 0.108634 |
+| CDC_Multi/RUS | 0.232289 | 0.676210 | 0.219233 | 0.430358 | 0.289529 | 0.108659 |
+| CDC_All/RUS | 0.232153 | 0.675931 | 0.219043 | 0.426210 | 0.287698 | 0.108664 |
+| Bridge/ROS | 0.232105 | 0.675420 | 0.218098 | 0.432997 | 0.288971 | 0.107942 |
+| Baseline/RUS | 0.231955 | 0.675656 | 0.219808 | 0.427090 | 0.288580 | 0.108684 |
+| Baseline/ROS | 0.231277 | 0.675167 | 0.221009 | 0.415242 | 0.288012 | 0.108016 |
+| CDC_All/ROS | 0.231259 | 0.675112 | 0.216106 | 0.436093 | 0.287846 | 0.107992 |
+| CDC_Multi/ROS | 0.231051 | 0.675239 | 0.217774 | 0.424953 | 0.286420 | 0.107962 |
+| Bridge/SMOTE | 0.230381 | 0.675099 | 0.213319 | 0.443169 | 0.285579 | 0.095950 |
+| CDC_Multi/SMOTE | 0.230097 | 0.674872 | 0.214639 | 0.436891 | 0.286648 | 0.095970 |
+| CDC_All/SMOTE | 0.229963 | 0.674739 | 0.209110 | 0.457760 | 0.285165 | 0.095981 |
+| CDC_All/ClassWeight | 0.229947 | 0.675418 | 0.214401 | 0.437510 | 0.287162 | 0.218568 |
+| CDC_Multi/ClassWeight | 0.229862 | 0.675775 | 0.222886 | 0.415747 | 0.286475 | 0.218341 |
+| Baseline/SMOTE | 0.229811 | 0.674725 | 0.217530 | 0.426017 | 0.286619 | 0.095992 |
+| Bridge/ClassWeight | 0.229588 | 0.675832 | 0.223126 | 0.410017 | 0.288228 | 0.218550 |
+| Baseline/ClassWeight | 0.229549 | 0.675616 | 0.216186 | 0.437237 | 0.287906 | 0.218665 |
+
+## 重複結果的來源
+
+下列實驗已完成五折，但其保存的預測與上表某個模型完全一致；為避免同一模型重複算入，僅保留較前面的主表來源：
+
+- [meps_event_ccs_group_hgb_seed777](results/meps_event_ccs_group_hgb_seed777/summary.csv)：對應 `meps_augmented_hgb_seed777/p_ensemble_fixed_50, meps_augmented_hgb_seed777/p_hgb_tuned, paper_fair_comparison_seed777/ccs_meps_group_hgb, paper_fair_comparison_seed777/ccs_only_hgb`。
+
+## SHAP：模型主要依據什麼預測？
+
+五個外層測試折各抽 1,000 筆，CatBoost 使用 TreeSHAP；HGB 的 one-hot 歸因加總回原始欄位。數值單位為模型 **raw log-odds**，排序依平均絕對 SHAP；它表示預測受該欄位影響的平均幅度，不表示風險方向或因果效果。[完整全域值](results/paper_fair_comparison_seed777/shap_global.csv)、[各折值](results/paper_fair_comparison_seed777/shap_fold.csv)。
+
+| Model | Rank | Feature | 平均絕對 SHAP（log-odds） |
+|---|---|---|---:|
+| catboost_family | 1 | number_inpatient | 0.274974 |
+| catboost_family | 2 | discharge_disposition_id | 0.145840 |
+| catboost_family | 3 | number_diagnoses | 0.051209 |
+| catboost_family | 4 | payer_code | 0.047029 |
+| catboost_family | 5 | diag_1 | 0.046731 |
+| catboost_raw | 1 | number_inpatient | 0.238927 |
+| catboost_raw | 2 | discharge_disposition_id | 0.139130 |
+| catboost_raw | 3 | diag_1 | 0.077924 |
+| catboost_raw | 4 | diag_3 | 0.059604 |
+| catboost_raw | 5 | payer_code | 0.042366 |
+| ccs_meps_refit_hgb | 1 | number_inpatient | 0.290321 |
+| ccs_meps_refit_hgb | 2 | discharge_disposition_id | 0.205978 |
+| ccs_meps_refit_hgb | 3 | number_diagnoses | 0.046228 |
+| ccs_meps_refit_hgb | 4 | diabetesMed | 0.040975 |
+| ccs_meps_refit_hgb | 5 | meps_ccs_revisit_mean | 0.040843 |
+
+三個模型的第一、二名都是過去住院次數 `number_inpatient` 與出院去向 `discharge_disposition_id`。原始 ICD CatBoost 的 `diag_1`、`diag_3` 排第三、四，顯示診斷表示有影響；MEPS HGB 的 `meps_ccs_revisit_mean` 排第五、平均絕對 SHAP 0.040843。所有 `meps_` 特徵合計約占該模型平均絕對 SHAP 的 **6.1%**，說明模型確實用到外部訊號，但配對 AP 沒有證明其帶來最終改善。`MeanSHAP_logodds` 的正負平均可能互相抵銷，不能用全域平均判斷單一特徵增加時風險的方向。
+
+[MEPS 30 天共同訓練的 CatBoost SHAP](results/meps_30d_joint_transfer_seed777/shap_global.csv)另對每折 500 筆、共 2,500 筆測試就醫解釋：過往住院次數 0.230564、出院去向 0.146597 仍居前二；`meps_30d_teacher_risk` 為 0.032326、排第 8，`meps_ccs_log_support` 為 0.019019、排第 15。這同樣證明訊號被使用，**不等於**加入外部資料提高 AP。CDC 的[診斷感知 SHAP](results/cdc_clinical_interpretability_results/shap_importance.csv)亦以住院次數及出院去向為主；[DiffWalk 控制](results/cdc_diffwalk_control_results/cdc_shap_summary.csv)有外部特徵歸因，但不單靠歸因宣稱提升。
+
+SHAP 只針對上述已保存解釋檔的模型分析；其他表格中的模型沒有可核對的 SHAP 結果，不推測其特徵排序。
+
+## 統計解讀與報告界線
+
+在同一測試折比較模型時，優先看配對病人 bootstrap；單看五折平均或五折標準差不能證明差異。主表結果經多次嘗試與選模，仍有探索性選模偏差。真實外部資料的成功接入可由特徵來源與 SHAP 證明，但若和同架構、同切分、無外部資料對照的 AP 差沒有穩定正值，就不能宣稱外部資料提升主要任務。本文只報已完成的五折；不填補未產生的數字。
+
+本附錄可由 `python scripts/experiments/build_results_analysis.py` 依目前保存的 OOF 和 CDC 摘要重新生成；重算的逐方法六指標另存於 `results/fivefold_metrics_recomputed.csv`。

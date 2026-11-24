@@ -24,6 +24,8 @@
 !/results/*/catboost_inner_trials.csv
 !/results/*/paired_ap_bootstrap.csv
 !/results/*/audit.json
+!/results/*/split_audit.json
+!/results/*/run_settings.json
 !/results/*/run.json
 !/results/*/external_sources.csv
 !/results/*/external_training.csv

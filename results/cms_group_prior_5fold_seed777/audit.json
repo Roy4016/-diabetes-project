@@ -1,0 +1,34 @@
+{
+  "reference_rows": 99343,
+  "reference_patients": 69990,
+  "completed_folds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "patient_disjoint": true,
+  "cms_mapped_rows": 16413,
+  "cms_mapped_fraction": 0.16521546560905148,
+  "cms_ccs_categories": [
+    "CCS_100",
+    "CCS_108",
+    "CCS_122",
+    "CCS_127"
+  ],
+  "cms_rates_are": "national risk-standardized aggregate percentages, not UCI patient outcomes",
+  "cms_period": [
+    {
+      "cms_start_date": "07/01/2023",
+      "cms_end_date": "06/30/2025"
+    }
+  ],
+  "cms_prior_sha256": "47e95e20ded54703613ecc7c429153a5f5182e39d166417f8d2efd3d03f83842",
+  "reference_oof_sha256": "e5ac0625fb4b5a7ae6fb03512594bb44f9ca84d9d99139e763f1a853719b6515",
+  "catboost_oof_sha256": "134cda41b9763550d1a9f058d858a4354ed28af4aed878f16085425f19352f41",
+  "hgb_params": "original CCS-only selected parameters per fold",
+  "catboost_params": "original raw-ICD validation choices per fold",
+  "alert_policy": "top 10.0% by prediction in each fold",
+  "seed": 777
+}

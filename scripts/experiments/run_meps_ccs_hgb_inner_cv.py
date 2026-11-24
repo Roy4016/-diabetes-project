@@ -10,6 +10,11 @@ import pandas as pd
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import StratifiedGroupKFold
 
+import sys
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+from diabetes_project.paper_comparison import top_fraction_metrics
+
 from _paths import CCS_RAW, UCI_RAW, result_dir
 from analyze_nested_hgb_blend import cluster_bootstrap
 from run_cdc_encoder_control import prepare_hospital
@@ -100,10 +105,28 @@ def run(args):
     print(f"[MEPS] {n_events:,} events, {n_linked:,} CCS records, {len(rates)} groups", flush=True)
     base_columns += [f"ccs_{diag}" for diag in DIAG]
     splitter = StratifiedGroupKFold(n_splits=args.folds, shuffle=True, random_state=args.seed)
+    reference = pd.read_csv(args.reference_oof, usecols=["encounter_id", "patient_nbr", "Fold", "y_true"])
+    if len(reference) != len(hospital) or reference.encounter_id.duplicated().any():
+        raise ValueError("Reference OOF cohort differs from hospital cohort")
+    reference = reference.set_index("encounter_id").reindex(hospital.encounter_id.to_numpy())
+    if reference.Fold.isna().any() or not np.array_equal(reference.patient_nbr.to_numpy(), hospital.patient_nbr.to_numpy()) or not np.array_equal(reference.y_true.to_numpy(), hospital.target.to_numpy()):
+        raise ValueError("Reference encounter, patient or label mismatch")
+    splits = list(splitter.split(hospital, hospital.target, hospital.patient_nbr))
+    audit = {"Rows": len(hospital), "Patients": int(hospital.patient_nbr.nunique()),
+             "Seed": args.seed, "Folds": []}
+    for fold, (train_idx, test_idx) in enumerate(splits, 1):
+        if set(hospital.patient_nbr.iloc[train_idx]) & set(hospital.patient_nbr.iloc[test_idx]):
+            raise ValueError(f"Patient overlap in fold {fold}")
+        if not np.all(reference.Fold.to_numpy()[test_idx] == fold):
+            raise ValueError(f"Reference outer fold {fold} mismatch")
+        audit["Folds"].append({"Fold": fold, "Test_Rows": len(test_idx),
+                               "Test_Patients": int(hospital.patient_nbr.iloc[test_idx].nunique())})
+    (output / "split_audit.json").write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+    print("[Audit] exact reference five-fold assignment and patient disjointness verified", flush=True)
+    if args.audit_only:
+        return
     parts, selection_rows = [], []
-    for fold, (train_idx, test_idx) in enumerate(
-        splitter.split(hospital, hospital.target, hospital.patient_nbr), 1,
-    ):
+    for fold, (train_idx, test_idx) in enumerate(splits, 1):
         train, test = hospital.iloc[train_idx], hospital.iloc[test_idx]
         if set(train.patient_nbr).intersection(test.patient_nbr):
             raise ValueError("Patient overlap in outer fold")
@@ -133,24 +156,35 @@ def run(args):
     oof = align_reference(pd.concat(parts, ignore_index=True), args.reference_oof)
     models = ["hgb_tuned", "ccs_only_hgb", "ccs_meps_group_hgb", *VARIANTS]
     metrics = pd.DataFrame([
-        {"Fold": int(fold), "Experiment": name,
-         "PR_AUC_AP": average_precision_score(group.y_true, group[f"p_{name}"])}
+        {"Fold": int(fold), "Experiment": name, "N_encounters": len(group),
+         "N_patients": int(group.patient_nbr.nunique()),
+         **top_fraction_metrics(group.y_true, group[f"p_{name}"], args.alert_fraction)}
         for fold, group in oof.groupby("Fold", sort=True) for name in models
     ])
-    summary = metrics.groupby("Experiment").PR_AUC_AP.agg(["mean", "std"]).reset_index()
+    summary = metrics.groupby("Experiment", sort=False).agg(
+        Folds=("Fold", "size"), PR_AUC_mean=("PR_AUC", "mean"),
+        PR_AUC_std=("PR_AUC", "std"), AUROC_mean=("AUROC", "mean"),
+        Precision_mean=("Precision", "mean"), Recall_mean=("Recall", "mean"),
+        F1_mean=("F1_score", "mean"), Brier_mean=("Brier_Score", "mean"),
+    ).reset_index()
+    summary["Pooled_PR_AUC"] = [average_precision_score(oof.y_true, oof[f"p_{name}"])
+                                 for name in summary.Experiment]
     comparisons = [("ccs_meps_inner_cv", "ccs_only_inner_cv"),
                    ("ccs_meps_inner_cv", "ccs_meps_group_hgb"),
                    ("ccs_meps_inner_cv", "ccs_only_hgb"),
                    ("ccs_only_inner_cv", "ccs_only_hgb")]
-    bootstrap = cluster_bootstrap(oof, models, comparisons, args.bootstrap, args.seed + 17000)
+    bootstrap = (cluster_bootstrap(oof, models, comparisons, args.bootstrap, args.seed + 17000)
+                 if args.bootstrap else None)
     oof.to_csv(output / "oof_all.csv", index=False)
     metrics.to_csv(output / "fold_results.csv", index=False)
     summary.to_csv(output / "summary.csv", index=False)
-    bootstrap.to_csv(output / "fold_stratified_patient_bootstrap.csv", index=False)
+    if bootstrap is not None:
+        bootstrap.to_csv(output / "fold_stratified_patient_bootstrap.csv", index=False)
     pd.DataFrame(selection_rows).to_csv(output / "inner_cv_selection.csv", index=False)
     (output / "config.json").write_text(json.dumps(vars(args), default=str, indent=2), encoding="utf-8")
     print("\nSummary\n", summary.round(6).to_string(index=False))
-    print("\nPatient bootstrap\n", bootstrap.round(6).to_string(index=False))
+    if bootstrap is not None:
+        print("\nPatient bootstrap\n", bootstrap.round(6).to_string(index=False))
 
 
 def main():
@@ -159,7 +193,7 @@ def main():
     parser.add_argument("--ccs-file", default=CCS_RAW)
     parser.add_argument("--event-data", default="data/processed/meps_events_2008_2012/meps_diabetes_event_30d_model.csv")
     parser.add_argument("--event-ccs", default="data/processed/meps_events_2008_2012/meps_inpatient_event_ccs.csv")
-    parser.add_argument("--reference-oof", required=True)
+    parser.add_argument("--reference-oof", default=str(ROOT / "results/meps_event_ccs_group_hgb_seed777/oof_all.csv"))
     parser.add_argument("--outdir", default=result_dir("meps_ccs_hgb_inner_cv"))
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--inner-folds", type=int, default=3)
@@ -167,10 +201,13 @@ def main():
     parser.add_argument("--alpha", type=float, default=50.0)
     parser.add_argument("--min-frequency", type=int, default=100)
     parser.add_argument("--bootstrap", type=int, default=2000)
+    parser.add_argument("--alert-fraction", type=float, default=.10)
+    parser.add_argument("--audit-only", action="store_true", help="Verify input and five-fold assignment without fitting HGB")
     parser.add_argument("--seed", type=int, default=777)
     args = parser.parse_args()
-    if (args.folds < 2 or args.inner_folds < 2 or args.min_group < 1 or
-            args.alpha < 0 or args.min_frequency < 1 or args.bootstrap < 1):
+    if (args.folds != 5 or args.inner_folds < 2 or args.min_group < 1 or
+            args.alpha < 0 or args.min_frequency < 1 or args.bootstrap < 0 or
+            not 0 < args.alert_fraction < 1):
         parser.error("Invalid fold, group-rate, or bootstrap settings")
     for path in (args.hospital, args.ccs_file, args.event_data, args.event_ccs, args.reference_oof):
         if not Path(path).is_file():

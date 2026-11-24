@@ -1,0 +1,99 @@
+{
+  "reference_rows": 99343,
+  "reference_patients": 69990,
+  "completed_folds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "variants": [
+    "meps",
+    "cdc",
+    "cms_meps",
+    "cms_cdc",
+    "meps_cdc",
+    "cms_meps_cdc"
+  ],
+  "patient_disjoint": true,
+  "feature_sets": {
+    "meps": [
+      "meps_ccs_readmit_mean",
+      "meps_ccs_revisit_mean",
+      "meps_ccs_readmit_max",
+      "meps_ccs_revisit_max"
+    ],
+    "cdc": [
+      "cdc_poor_health"
+    ],
+    "cms_meps": [
+      "cms_readmission_rate",
+      "cms_mapped",
+      "meps_ccs_readmit_mean",
+      "meps_ccs_revisit_mean",
+      "meps_ccs_readmit_max",
+      "meps_ccs_revisit_max"
+    ],
+    "cms_cdc": [
+      "cms_readmission_rate",
+      "cms_mapped",
+      "cdc_poor_health"
+    ],
+    "meps_cdc": [
+      "meps_ccs_readmit_mean",
+      "meps_ccs_revisit_mean",
+      "meps_ccs_readmit_max",
+      "meps_ccs_revisit_max",
+      "cdc_poor_health"
+    ],
+    "cms_meps_cdc": [
+      "cms_readmission_rate",
+      "cms_mapped",
+      "meps_ccs_readmit_mean",
+      "meps_ccs_revisit_mean",
+      "meps_ccs_readmit_max",
+      "meps_ccs_revisit_max",
+      "cdc_poor_health"
+    ]
+  },
+  "external": {
+    "cms_mapped_rows": 16413,
+    "cms_mapped_fraction": 0.16521546560905148,
+    "cms_groups": [
+      "CCS_100",
+      "CCS_108",
+      "CCS_122",
+      "CCS_127"
+    ],
+    "meps_events": 2634,
+    "meps_linked_ccs": 3185,
+    "meps_groups": 29,
+    "meps_global_readmit_30d": 0.13249810174639332,
+    "meps_global_er_revisit_30d": 0.08580106302201974,
+    "cdc": {
+      "respondents": 35346,
+      "poor_health_prevalence": 0.4064957845300741,
+      "held_out_cdc_ap": 0.4877968564811556,
+      "held_out_cdc_auroc": 0.5948548523198354,
+      "bridge_features": [
+        "bridge_age",
+        "bridge_sex",
+        "bridge_high_bp",
+        "bridge_high_chol"
+      ],
+      "target": "self-rated general health fair or poor; NOT readmission"
+    }
+  },
+  "selected_catboost": "original raw-ICD inner-validation choices held fixed in each fold",
+  "alert_policy": "top 10.0% scores within each fold",
+  "source_sha256": {
+    "cms": "47e95e20ded54703613ecc7c429153a5f5182e39d166417f8d2efd3d03f83842",
+    "meps_events": "1952f08b91fbe8a27fb5e344293f3fb4cd7bd0e81796b8efbf7b67b9bd037480",
+    "meps_event_ccs": "dbb988163091f57943cfe7ef7272ff89c769fa2eec2efa76a873db82aef7606b",
+    "cdc": "a971809d0786d2d7d7f6070f83dfe8af9d860ea33a79e0e2701c8a49f78f9861",
+    "reference_oof": "e5ac0625fb4b5a7ae6fb03512594bb44f9ca84d9d99139e763f1a853719b6515",
+    "catboost_oof": "134cda41b9763550d1a9f058d858a4354ed28af4aed878f16085425f19352f41",
+    "cms_oof": "a0153c73d69ce14af34b440cd01c7371c5d2d0b92fbd8f28f63e24e7fdf99e81"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "Rows": 99343,
+  "Patients": 69990,
+  "Seed": 777,
+  "Folds": [
+    {
+      "Fold": 1,
+      "Test_Rows": 19869,
+      "Test_Patients": 14043
+    },
+    {
+      "Fold": 2,
+      "Test_Rows": 19869,
+      "Test_Patients": 13953
+    },
+    {
+      "Fold": 3,
+      "Test_Rows": 19868,
+      "Test_Patients": 13973
+    },
+    {
+      "Fold": 4,
+      "Test_Rows": 19869,
+      "Test_Patients": 14028
+    },
+    {
+      "Fold": 5,
+      "Test_Rows": 19868,
+      "Test_Patients": 13993
+    }
+  ]
+}

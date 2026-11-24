@@ -1,0 +1,63 @@
+{
+  "seed": 777,
+  "cohort": "99,343 encounters, 69,990 patients, fixed patient-disjoint five folds",
+  "top_percent": [
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0
+  ],
+  "alert_policy": "floor(fold_size * fraction) highest predicted risks; stable mergesort tie-break",
+  "metrics": "arithmetic mean of five outer folds; AP=average_precision_score",
+  "source_audit": [
+    {
+      "Source": "paper",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/paper_fair_comparison_seed777/oof_all.csv.gz",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "134cda41b9763550d1a9f058d858a4354ed28af4aed878f16085425f19352f41"
+    },
+    {
+      "Source": "cms",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/cms_group_prior_5fold_seed777/oof_all.csv.gz",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "a0153c73d69ce14af34b440cd01c7371c5d2d0b92fbd8f28f63e24e7fdf99e81"
+    },
+    {
+      "Source": "cdc",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/cdc_clinical_interpretability_results/oof_all.csv",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "a158f5f7980cf11ad1d67c4fb5aadbf95c3fef25d88997cff202a5eaa395c157"
+    },
+    {
+      "Source": "diffwalk",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/cdc_diffwalk_control_results/oof_all.csv",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "901b5103ce08bf38ec6f28302967dfea0b71d096fa8c6f1f39c93e28910f8349"
+    },
+    {
+      "Source": "meps_nn",
+      "Path": "/media/synology/G/314554044/diabetes_project/results/meps_30d_joint_transfer_seed777/oof_all.csv.gz",
+      "Rows": 99343,
+      "Patients": 69990,
+      "SHA256": "b12b4819ef93eb6ba61eeea186d8ae9acf84f6f627090e28876e0c6477a0dfc6"
+    }
+  ],
+  "ablation_oof": "/media/synology/G/314554044/diabetes_project/results/final_presentation_completion/catboost_feature_ablation_oof.csv",
+  "extra_oof": [
+    "results/cms_meps_cdc_catboost_seed777/oof_all.csv.gz"
+  ],
+  "added_models": [
+    "cdc",
+    "cms_cdc",
+    "cms_meps",
+    "cms_meps_cdc",
+    "cms_meps_cdc_hgb50",
+    "meps",
+    "meps_cdc"
+  ]
+}

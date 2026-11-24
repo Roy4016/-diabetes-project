@@ -1,0 +1,9 @@
+Model,Available_Folds,Reason
+E2_Clinical,0,Missing audited inner-validation probabilities for one or more folds
+E4_Clinical_CDCHealth,0,Missing audited inner-validation probabilities for one or more folds
+No_DiffWalk,0,Missing audited inner-validation probabilities for one or more folds
+Only_DiffWalk,0,Missing audited inner-validation probabilities for one or more folds
+Permuted_DiffWalk,0,Missing audited inner-validation probabilities for one or more folds
+bhuvan_hgb,0,Missing audited inner-validation probabilities for one or more folds
+raw_hgb_catboost_raw_50,0,Missing audited inner-validation probabilities for one or more folds
+roy_hgb_46,0,Missing audited inner-validation probabilities for one or more folds

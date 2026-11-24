@@ -1,0 +1,6 @@
+Treatment,Control,MeanFold_Delta_PR_AUC,CI95_Lower,CI95_Upper,FractionPositive,BootstrapReplicates,ResamplingUnit
+cms_hgb,ccs_only_hgb,-0.0006828431796541135,-0.0017564629985938008,0.00036671407171933086,0.095,2000,patient within fold
+cms_catboost_raw,catboost_raw,5.748122720194981e-07,-0.0011645447981004392,0.0012381245172660169,0.518,2000,patient within fold
+cms_hgb_catboost_raw_50,ccs_only_hgb_catboost_raw_50,-0.0006326675286898286,-0.0011702560748688823,-6.281248332703396e-05,0.014,2000,patient within fold
+ccs_only_hgb_cms_catboost_50,ccs_only_hgb_catboost_raw_50,-0.000299604238702017,-0.0009075021138554618,0.00048661683710660706,0.285,2000,patient within fold
+cms_hgb_cms_catboost_50,ccs_only_hgb_catboost_raw_50,-0.0007296004462572725,-0.0015614710162879148,0.00023792249222663605,0.08,2000,patient within fold
