@@ -24,7 +24,7 @@ python scripts/experiments/run_meps_30d_joint_transfer.py \
 
 單折檢查可加 `--max-folds 1 --epochs 1 --bootstrap 0 --outdir results/meps_30d_joint_smoke`；單折結果不可與完整五折分數比較。預設在 CPU 使用四條執行緒，避免占用 GPU。
 
-輸出 `summary.csv`、`fold_metrics.csv`、`paired_ap_bootstrap.csv`、`training.csv`、`config.json` 和逐筆 OOF。指標包含平均 **PR-AUC/AP、AUROC、Precision、Recall、F1、Brier**；另存 pooled AP。Precision、Recall、F1 使用每折固定最高風險 10% 警示量。Bootstrap 以每折病人為重抽單位，報告五折平均 AP 差及 95% 區間。`shap_fold.csv`／`shap_global.csv` 提供加入外部特徵的 CatBoost TreeSHAP；預設每折抽 500 筆、單位為 log-odds。可用 `--shap-sample 0` 略過 SHAP。
+輸出 `summary.csv`、`fold_metrics.csv`、`paired_ap_bootstrap.csv`、`training.csv`、`config.json` 和逐筆 OOF。指標包含平均 **PR-AUC (Average Precision, AP)、AUROC、Precision、Recall、F1、Brier**；另存 pooled AP。Precision、Recall、F1 使用每折固定最高風險 10% 警示量。Bootstrap 以每折病人為重抽單位，報告五折平均 AP 差及 95% 區間。`shap_fold.csv`／`shap_global.csv` 提供加入外部特徵的 CatBoost TreeSHAP；預設每折抽 500 筆、單位為 log-odds。可用 `--shap-sample 0` 略過 SHAP。
 
 主要判讀：`joint_meps_30d` 對 `uci_only_nn` 檢驗真正共同訓練的增益；`group_teacher_catboost` 對 `catboost_raw` 檢驗 MEPS 群組專家是否改善 CatBoost；再檢查兩種固定 50/50 融合是否超過 `ccs_only_hgb_catboost50`。相對文獻的 0.237 只能作數值參考，因文獻採不同 holdout 切分。
 

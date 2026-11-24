@@ -13,7 +13,7 @@ UCI 原始 CSV SHA-256 是
 它的折別也不同。此比較以最新 HGB／MEPS 實驗的 99,343 筆 OOF 折別為唯一基準，
 不讀取 `preprocess.py` 的舊切分。
 
-| 現有同切分方法 | 五折平均 PR-AUC／AP | 五折平均 AUROC |
+| 現有同切分方法 | 五折平均 PR-AUC (Average Precision, AP) | 五折平均 AUROC |
 |---|---:|---:|
 | Rajpoot 復現 HGB | 0.228703 | 0.671776 |
 | 同復現中的 46 欄 one-hot HGB | 0.237261 | 0.676968 |
@@ -64,7 +64,7 @@ python scripts/experiments/run_paper_fair_comparison.py \
   --outdir results/paper_fair_comparison_seed777
 ```
 
-`fold_metrics.csv` 與 `summary.csv` 同時輸出 AUROC、PR-AUC（`average_precision_score`）、
+`fold_metrics.csv` 與 `summary.csv` 同時輸出 AUROC、PR-AUC (Average Precision, AP)（`average_precision_score`）、
 Precision、Recall、F1-score 與 Brier Score。Precision／Recall／F1 採每折**預先固定的
 最高風險 10% 警示量**，只依分數排序，不使用測試標籤選門檻；機率指標與此門檻無關。
 `Pooled_PR_AUC` 另列，不與五折平均 AP 混用。
@@ -84,10 +84,10 @@ HGB 的 one-hot 欄位先逐筆加總回原始欄位再排名。SHAP 描述模�
 ## 2026-11-21 五折補跑結果
 
 已完成五折 CatBoost 訓練及每折 1,000 筆測試資料的 SHAP；本專題 MEPS HGB
-每折重訓機率與原 OOF 完全一致。下表數值是**五折 PR-AUC 平均**，
+每折重訓機率與原 OOF 完全一致。下表數值是**五折 PR-AUC (Average Precision, AP) 平均**，
 與單一測試集的 pooled AP 分開報告：
 
-| 方法 | 五折平均 PR-AUC | pooled AP | 五折平均 AUROC | Brier |
+| 方法 | 五折平均 PR-AUC (Average Precision, AP) | pooled AP | 五折平均 AUROC | Brier |
 |---|---:|---:|---:|---:|
 | 本專題 CCS-only HGB | 0.239179 | 0.237823 | 0.678333 | 0.095470 |
 | 本專題 MEPS HGB | 0.239077 | 0.238043 | 0.677884 | 0.095500 |
@@ -103,11 +103,11 @@ CatBoost 原始 ICD-9 相對 CCS-only HGB 的五折平均 AP 差為 +0.007327，
 未顯示比相同 CatBoost 下的 CCS-only 融合更好**：診斷家族版差值 −0.000197
 （95% CI [−0.001026, 0.000604]），原始 ICD-9 版差值 −0.000234
 （95% CI [−0.001096, 0.000547]）；完整對照見
-`results/paper_fair_comparison_seed777/summary.csv`。最高 PR-AUC 0.247374
+`results/paper_fair_comparison_seed777/summary.csv`。最高 PR-AUC (Average Precision, AP) 0.247374
 比文獻數字 0.237 高 0.010374，但兩者測試協定不同，不能宣稱已在同一測試集
 超越該論文。
 
 全域 SHAP 以測試折平均絕對 log-odds 貢獻排序：三個模型第一名皆為
 `number_inpatient`，第二名皆為 `discharge_disposition_id`。MEPS HGB 的
 `meps_ccs_revisit_mean` 排第五（0.040843），代表模型使用了外部訊號；
-它的存在本身不等於 PR-AUC 有增益。
+它的存在本身不等於 PR-AUC (Average Precision, AP) 有增益。

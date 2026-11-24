@@ -159,7 +159,10 @@ def cms_coverage(args, scores: pd.DataFrame) -> pd.DataFrame:
 
 
 def markdown_table(table: pd.DataFrame, columns: list[str], digits: int = 6) -> str:
-    header = "| " + " | ".join(columns) + " |"
+    header = "| " + " | ".join(
+        "PR-AUC (Average Precision, AP)" if column == "PR-AUC" else column
+        for column in columns
+    ) + " |"
     rule = "| " + " | ".join(["---"] + ["---:" for _ in columns[1:]]) + " |"
     rows = []
     for _, row in table[columns].iterrows():
@@ -213,7 +216,7 @@ def write_report(args, metrics, ablation, bootstrap, coverage, missing, audit) -
 
 UCI 共 **99,343** 次就醫、**69,990** 位病人，seed **777**，病人互斥五折。所有納入的 OOF 均逐筆核對 Encounter ID、Patient ID、Fold、Label。AP 為 `average_precision_score`；表列六項指標為各測試折的**算術平均**。Precision、Recall、F1 固定取每折預測風險最高 10%。合併所有 OOF 計算的 pooled AP 存在 CSV 的另一欄，不與五折平均混淆。對照資料及 SHA256 見 `source_audit.csv`。
 
-CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資料；正式的外部資料來源限定為 CDC BRFSS、MEPS、CMS HRRP。六項指標的方向為 PR-AUC、AUROC、Precision、Recall、F1 越高越好，Brier 越低越好。
+CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資料；正式的外部資料來源限定為 CDC BRFSS、MEPS、CMS HRRP。六項指標的方向為 PR-AUC (Average Precision, AP)、AUROC、Precision、Recall、F1 越高越好，Brier 越低越好。
 
 先前論文報告的 0.237 AP 使用不同的單次 holdout；它只能作背景參考。公平比較以此處同一 99,343 筆、同五折 OOF 的 Rajpoot HGB 復現（AP 0.228703）及其他同切分模型為準。
 
@@ -267,7 +270,7 @@ SHAP 只說明模型預測如何使用特徵，不等於移除特徵後的 AP �
 
 ## 可以直接放入 Final Presentation 的文字
 
-> 在相同的 99,343 次就醫、69,990 位病人、seed 777 病人互斥五折下，Raw ICD-9 CatBoost 的平均 PR-AUC 為 0.246506；與 CCS HGB 固定 50/50 融合達 **{best:.6f}**。不含 CCS 的 Raw HGB＋Raw CatBoost 融合為 **{raw_ensemble:.6f}**。CDC、MEPS 與 CMS 均採真實外部資料；在各自同架構配對比較中，尚未確認它們能提升最高的 HGB＋CatBoost 基準。MEPS 30 天共同訓練對同架構神經網路有小幅正差；這與最佳融合模型的比較是不同問題。
+> 在相同的 99,343 次就醫、69,990 位病人、seed 777 病人互斥五折下，Raw ICD-9 CatBoost 的平均 PR-AUC (Average Precision, AP) 為 0.246506；與 CCS HGB 固定 50/50 融合達 **{best:.6f}**。不含 CCS 的 Raw HGB＋Raw CatBoost 融合為 **{raw_ensemble:.6f}**。CDC、MEPS 與 CMS 均採真實外部資料；在各自同架構配對比較中，尚未確認它們能提升最高的 HGB＋CatBoost 基準。MEPS 30 天共同訓練對同架構神經網路有小幅正差；這與最佳融合模型的比較是不同問題。
 
 ## 尚缺或不適用
 

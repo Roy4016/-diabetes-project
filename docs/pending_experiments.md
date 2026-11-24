@@ -8,7 +8,7 @@
 
 程式：[run_tabpfn35_meps.py](../scripts/experiments/run_tabpfn35_meps.py)。比較 CCS-only 與 CCS＋MEPS 事件群組特徵，各自用相同 context 筆數訓練 HGB 作公平的資料量對照。另列完整外層訓練資料的既有 HGB、原始 ICD-9 CatBoost、CCS-only HGB＋CatBoost，以及 TabPFN 與 CatBoost 固定 50/50 融合；完整 HGB 與 context HGB 不應混稱同一訓練量。
 
-程式已補上 **AP／PR-AUC、AUROC、Precision、Recall、F1、Brier、pooled AP**，Precision／Recall／F1 採每折預先固定的最高風險 10% 警示量；完成五折後做折內病人配對 bootstrap。每折保存 OOF，若中斷可用相同參數加 `--resume`，會核對設定與既有預測的 ID、病人、標籤、折別。
+程式已補上 **PR-AUC (Average Precision, AP)、AUROC、Precision、Recall、F1、Brier、pooled AP**，Precision／Recall／F1 採每折預先固定的最高風險 10% 警示量；完成五折後做折內病人配對 bootstrap。每折保存 OOF，若中斷可用相同參數加 `--resume`，會核對設定與既有預測的 ID、病人、標籤、折別。
 
 先跑只讀資料稽核，無須安裝 TabPFN 或占用 GPU：
 

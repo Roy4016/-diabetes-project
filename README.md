@@ -2,7 +2,7 @@
 
 糖尿病 30 天再住院預測
 
-本專題以 UCI 糖尿病住院資料預測出院後 30 天內再住院，並檢驗真實外部資料能否改善預測。主要指標是 **PR-AUC（AP）**：程式使用 `sklearn.metrics.average_precision_score`，與以梯形法積分 PR 曲線的數值可能不同。AUROC、F1、Brier 為輔助指標。以下數字均取自 `results/` 或 `logs/` 中已完成的執行紀錄；尚未執行的程式不列為結果。完整方法、所有已保存指標、論文復現、SHAP 與比較限制見 [實驗結果總報告](RESULTS_ANALYSIS.md)。
+本專題以 UCI 糖尿病住院資料預測出院後 30 天內再住院，並檢驗真實外部資料能否改善預測。主要指標是 **PR-AUC (Average Precision, AP)**：程式使用 `sklearn.metrics.average_precision_score`，與以梯形法積分 PR 曲線的數值可能不同。AUROC、F1、Brier 為輔助指標。以下數字均取自 `results/` 或 `logs/` 中已完成的執行紀錄；尚未執行的程式不列為結果。完整方法、所有已保存指標、論文復現、SHAP 與比較限制見 [實驗結果總報告](RESULTS_ANALYSIS.md)。
 
 ## 目前結論
 
@@ -29,9 +29,9 @@
 
 ## 近期完整五折比較
 
-以下沿用 **99,343 次就醫／69,990 位病人、seed 777、相同 patient-disjoint 五折**。六項指標皆為五個測試折的算術平均；Precision、Recall、F1 固定取每折風險最高 **10%**。PR-AUC 使用 `average_precision_score`。表內各欄最佳數值以粗體標示（Brier 越低越好）；粗體不代表模型間差異具統計顯著性。這裡的 Rajpoot HGB 是在本專題五折上重跑的復現，與原論文單次 holdout AP 0.237 不能直接排名。完整模型表見[正式五折指標](results/final_presentation_completion/final_experiment_metrics.csv)，方法與結果解讀見[實驗結果總報告](RESULTS_ANALYSIS.md)。
+以下沿用 **99,343 次就醫／69,990 位病人、seed 777、相同 patient-disjoint 五折**。六項指標皆為五個測試折的算術平均；Precision、Recall、F1 固定取每折風險最高 **10%**。PR-AUC (Average Precision, AP) 使用 `average_precision_score`。表內各欄最佳數值以粗體標示（Brier 越低越好）；粗體不代表模型間差異具統計顯著性。這裡的 Rajpoot HGB 是在本專題五折上重跑的復現，與原論文單次 holdout AP 0.237 不能直接排名。完整模型表見[正式五折指標](results/final_presentation_completion/final_experiment_metrics.csv)，方法與結果解讀見[實驗結果總報告](RESULTS_ANALYSIS.md)。
 
-| 方法 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| 方法 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 |---|---:|---:|---:|---:|---:|---:|
 | Rajpoot HGB 復現 | 0.228703 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 |
 | 原始 46 欄 HGB | 0.237261 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 |
@@ -51,7 +51,7 @@
 
 早期 LR／RF／XGBoost 已在同一五折切分重跑。下表與上表採相同 **Top 10%** 規則；完整六指標與其他加權／SMOTENC 比例見[重跑結果](results/classic_5fold_recheck_seed777/summary.csv)。
 
-| 方法 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| 方法 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 |---|---:|---:|---:|---:|---:|---:|
 | LR 標準權重 | 0.212744 | 0.656468 | 0.261128 | 0.229185 | 0.244116 | 0.097284 |
 | RF 標準權重 | 0.222174 | 0.670451 | 0.267976 | 0.235194 | 0.250517 | 0.098313 |
@@ -63,7 +63,7 @@
 
 E0 沿用完整 Raw ICD-9 CatBoost 的五折 OOF；E1～E3 在**相同病人互斥五折**下移除指定欄位並重新訓練。六項指標為五個測試折的平均；Precision、Recall、F1 使用各折風險最高 **10%**。粗體為此表最佳值，Brier 越低越好。ΔAP 是完整模型 E0 減該消融模型的五折平均 AP。[原始六項指標](results/final_presentation_completion/final_ablation_metrics.csv)｜[病人配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)。
 
-| 實驗／移除欄位 | PR-AUC | AUROC | Precision | Recall | F1 | Brier | E0 − 消融 ΔAP |
+| 實驗／移除欄位 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier | E0 − 消融 ΔAP |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | E0：完整 Raw CatBoost | **0.246506** | **0.682839** | **0.285196** | **0.250308** | **0.266616** | **0.095084** | — |
 | E1：`number_inpatient` | 0.220537 | 0.658885 | 0.251158 | 0.220433 | 0.234794 | 0.096609 | +0.025970 |
@@ -110,7 +110,7 @@ LR、RF、XGBoost 當時使用**相同的單次固定 holdout 分割**，尚未�
 
 下表補齊 **XGBoost class weight 與各個 SMOTENC 比例的 test 全部六項指標**。Precision、Recall、F1 使用在 validation 選出的 F1 最佳門檻，再固定用於 test；AP、AUROC、Brier 不受分類門檻影響。這些是早期**單次固定 holdout**，不能與後期五折平均值直接比較。
 
-| 方法 | Test AP／PR-AUC | AUROC | Precision | Recall | F1 | Brier | Validation 選出門檻 |
+| 方法 | Test PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier | Validation 選出門檻 |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | XGBoost 標準權重 | 0.229119 | 0.655925 | 0.206793 | 0.419911 | 0.277115 | 0.101391 | 0.131729 |
 | XGBoost class weight | 0.218236 | 0.641720 | 0.189797 | 0.488320 | 0.273350 | 0.242900 | 0.507230 |
@@ -146,7 +146,7 @@ LR 的其他使用者提供指標為 Precision **0.1818**、Recall **0.5072**、
 
 `Direct8_MEPS_Both8` 在 seed 777／2024／3407 的五折平均 AP 分別為 **0.235585／0.233741／0.234106**；各自 Clinical 為 **0.234919／0.232897／0.233321**。[三組輸出](results/meps_bridge8_results/summary.csv)｜[2024](results/meps_bridge8_seed2024/summary.csv)｜[3407](results/meps_bridge8_seed3407/summary.csv)。這些跨 seed 數值是穩健性檢查，不能用選最好的 seed 來宣稱 SOTA。
 
-其他已執行的 CDC 檢查：較早的 [CDC proxy XGBoost 固定 holdout](results/cdc_proxy_xgb_results/experiment_results.csv)中，Baseline test AP 0.224499、CDC-All 0.226693；這套特徵與分割不同於上表，後續五折結果優先採用上表。[CDC domain-shift 診斷](results/cdc_domain_shift_analysis/domain_results.csv)的病人層來源辨識 AUC 在 seed 777 的完整特徵下為 0.909635，顯示 CDC 與醫院族群差異很大，但它**不是**再住院 PR-AUC。[CDC 編碼器／類別不平衡對照](results/cdc_encoder_control_results/summary_mean_std.csv)中，Bridge 0.232240、CDC-pretrained 0.232009、隨機編碼器 0.232117，SMOTENC 版本約 0.221–0.223；這些分數使用該腳本自己的基線。更早的 [CDC 五折](results/cdc_5fold_results/summary_mean_std.csv)與 [CDC＋不平衡 20 組](results/cdc_ih_5fold_results/summary_mean_std.csv)保留作歷史紀錄；同名方法以較新的臨床／診斷感知結果為主。
+其他已執行的 CDC 檢查：較早的 [CDC proxy XGBoost 固定 holdout](results/cdc_proxy_xgb_results/experiment_results.csv)中，Baseline test AP 0.224499、CDC-All 0.226693；這套特徵與分割不同於上表，後續五折結果優先採用上表。[CDC domain-shift 診斷](results/cdc_domain_shift_analysis/domain_results.csv)的病人層來源辨識 AUC 在 seed 777 的完整特徵下為 0.909635，顯示 CDC 與醫院族群差異很大，但它**不是**再住院 PR-AUC (Average Precision, AP)。[CDC 編碼器／類別不平衡對照](results/cdc_encoder_control_results/summary_mean_std.csv)中，Bridge 0.232240、CDC-pretrained 0.232009、隨機編碼器 0.232117，SMOTENC 版本約 0.221–0.223；這些分數使用該腳本自己的基線。更早的 [CDC 五折](results/cdc_5fold_results/summary_mean_std.csv)與 [CDC＋不平衡 20 組](results/cdc_ih_5fold_results/summary_mean_std.csv)保留作歷史紀錄；同名方法以較新的臨床／診斷感知結果為主。
 
 ### 較保守的臨床特徵流程：MEPS 遷移學習
 

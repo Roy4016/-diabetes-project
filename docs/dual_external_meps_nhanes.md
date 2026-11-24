@@ -32,7 +32,7 @@ python scripts/experiments/run_dual_external_meps_nhanes.py \
 
 短跑可加 `--max-folds 1 --epochs 2 --bootstrap 0`，並使用另一個 `--outdir`。**單折不是完整五折結果**。預設 CPU 訓練外部編碼器，避免占用忙碌中的 GPU。
 
-輸出：`external_sources.csv` 紀錄外部資料規模與陽性率；`external_training.csv` 紀錄多任務訓練 loss；`oof_all.csv.gz` 為逐筆折外預測；`fold_metrics.csv` 與 `summary.csv` 有 **AUROC、PR-AUC／AP、Precision、Recall、F1、Brier**，Precision／Recall／F1 採每折固定最高風險 10% 警示量；`paired_ap_bootstrap.csv` 是折內病人配對 AP 差值的 95% 區間；`config.json` 保存切分與標籤定義。`Pooled_PR_AUC` 另列，不與五折平均 AP 混用。
+輸出：`external_sources.csv` 紀錄外部資料規模與陽性率；`external_training.csv` 紀錄多任務訓練 loss；`oof_all.csv.gz` 為逐筆折外預測；`fold_metrics.csv` 與 `summary.csv` 有 **AUROC、PR-AUC (Average Precision, AP)、Precision、Recall、F1、Brier**，Precision／Recall／F1 採每折固定最高風險 10% 警示量；`paired_ap_bootstrap.csv` 是折內病人配對 AP 差值的 95% 區間；`config.json` 保存切分與標籤定義。`Pooled_PR_AUC` 另列，不與五折平均 AP 混用。
 
 關鍵判讀是先看 `grouping_dual` 是否超過 `grouping_meps` 與 `grouping_nhanes`，再看 `multitask_dual` 是否超過相應單來源版本。最後以 `*_catboost_raw50` 對 `ccs_only_catboost_raw50`，檢查雙來源是否改善目前最佳流程。僅有雙來源模型分數高於 SOTA 文獻數值，不等於外部資料帶來額外增益；仍需同切分配對對照。
 
@@ -40,7 +40,7 @@ python scripts/experiments/run_dual_external_meps_nhanes.py \
 
 ## 2026-11-22 五折結果
 
-主指標為五折平均 PR-AUC／AP；所有方法都用相同 99,343 筆和相同病人折別。下表是已完成的五折摘要，完整六指標、折間標準差與 pooled AP 見 [summary.csv](../results/meps_nhanes_dual_external_seed777/summary.csv)。
+主指標為五折平均 PR-AUC (Average Precision, AP)；所有方法都用相同 99,343 筆和相同病人折別。下表是已完成的五折摘要，完整六指標、折間標準差與 pooled AP 見 [summary.csv](../results/meps_nhanes_dual_external_seed777/summary.csv)。
 
 | 方法 | 五折平均 AP | 平均 AUROC | Brier | 說明 |
 |---|---:|---:|---:|---|
@@ -62,4 +62,4 @@ python scripts/experiments/run_dual_external_meps_nhanes.py \
 | Grouping 雙來源 HGB＋CatBoost | 0.246639 | 0.683150 | 0.095102 |
 | Multitask 雙來源 HGB＋CatBoost | 0.246877 | 0.683299 | 0.095096 |
 
-目前雙來源多任務 AP 比其 MEPS-only／NHANES-only 版本各高約 0.000600／0.000464，但兩個配對病人 bootstrap 95% CI 分別為 **[−0.001059, +0.002080]**、**[−0.000950, +0.001719]**，都跨零。相對 CCS-only HGB，多任務雙來源 ΔAP **−0.000876**、CI **[−0.002436, +0.000313]**；群組雙來源 ΔAP **−0.001422**、CI **[−0.003072, +0.000049]**。加入 CatBoost 後，最佳雙來源融合是多任務版 **0.246877**，比現有 CCS-only 融合低 **0.000496**，CI **[−0.001267, +0.000255]**；比原有 MEPS event-CCS 融合低 **0.000262**，CI **[−0.001238, +0.000658]**。完整 17 組配對比較見 [bootstrap](../results/meps_nhanes_dual_external_seed777/paired_ap_bootstrap.csv)。**結論：在目前同切分下，兩個外部來源同時加入沒有可確認的 PR-AUC 改善。**
+目前雙來源多任務 AP 比其 MEPS-only／NHANES-only 版本各高約 0.000600／0.000464，但兩個配對病人 bootstrap 95% CI 分別為 **[−0.001059, +0.002080]**、**[−0.000950, +0.001719]**，都跨零。相對 CCS-only HGB，多任務雙來源 ΔAP **−0.000876**、CI **[−0.002436, +0.000313]**；群組雙來源 ΔAP **−0.001422**、CI **[−0.003072, +0.000049]**。加入 CatBoost 後，最佳雙來源融合是多任務版 **0.246877**，比現有 CCS-only 融合低 **0.000496**，CI **[−0.001267, +0.000255]**；比原有 MEPS event-CCS 融合低 **0.000262**，CI **[−0.001238, +0.000658]**。完整 17 組配對比較見 [bootstrap](../results/meps_nhanes_dual_external_seed777/paired_ap_bootstrap.csv)。**結論：在目前同切分下，兩個外部來源同時加入沒有可確認的 PR-AUC (Average Precision, AP) 改善。**

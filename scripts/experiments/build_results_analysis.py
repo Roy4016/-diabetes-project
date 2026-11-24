@@ -296,7 +296,7 @@ def three_external_section():
     names = ["catboost_raw", "ccs_only_hgb_catboost_raw_50", "cms_catboost_raw", "meps", "cdc",
              "cms_meps", "cms_cdc", "meps_cdc", "cms_meps_cdc", "cms_meps_cdc_hgb50"]
     metrics = summary.set_index("Model").loc[names]
-    rows = ["| 模型 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |",
+    rows = ["| 模型 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     columns = ["PR_AUC_mean", "AUROC_mean", "Precision_mean", "Recall_mean", "F1_mean", "Brier_mean"]
     for name, record in metrics.iterrows():
@@ -332,7 +332,7 @@ def three_external_section():
 
 {chr(10).join(rows)}
 
-三來源融合相對無外部資料的 CCS HGB＋Raw CatBoost，平均 **ΔAP {paired.MeanFold_Delta_PR_AUC:+.6f}**；每折內按病人配對抽樣 2,000 次的 95% CI 為 **[{paired.CI95_Lower:+.6f}, {paired.CI95_Upper:+.6f}]**。Top 10% 的 F1 從 **{metrics.loc['ccs_only_hgb_catboost_raw_50','F1_mean']:.6f}** 到 **{metrics.loc['cms_meps_cdc_hgb50','F1_mean']:.6f}**，但 AP 較低且配對 CI 跨零，不能宣稱三來源聯合提高主要 PR-AUC。其他配對差值見[完整 bootstrap](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+三來源融合相對無外部資料的 CCS HGB＋Raw CatBoost，平均 **ΔAP {paired.MeanFold_Delta_PR_AUC:+.6f}**；每折內按病人配對抽樣 2,000 次的 95% CI 為 **[{paired.CI95_Lower:+.6f}, {paired.CI95_Upper:+.6f}]**。Top 10% 的 F1 從 **{metrics.loc['ccs_only_hgb_catboost_raw_50','F1_mean']:.6f}** 到 **{metrics.loc['cms_meps_cdc_hgb50','F1_mean']:.6f}**，但 AP 較低且配對 CI 跨零，不能宣稱三來源聯合提高主要 PR-AUC (Average Precision, AP)。其他配對差值見[完整 bootstrap](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
 
 CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它本身不是再住院標籤；MEPS 使用精確日期事件的 CCS 群組 30 天再就醫／再住院統計；CMS 使用四類疾病的全國彙總再住院率，約覆蓋醫院隊列 16.5%。這些欄位以共同人口或診斷資訊對齊；不同資料來源的測量方式與涵蓋範圍，可能限制外部訊號的效益，但本實驗不能判定因果原因。
 
@@ -340,7 +340,7 @@ CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它�
 
 {chr(10).join(shap_rows)}
 
-同一組 OOF 的固定警示比例敏感度分析如下；**PR-AUC、AUROC、Brier 不隨警示比例改變**。三來源融合在 Top 5% 與 10% 的 F1 略高，Top 15%～25% 則沒有此優勢。[全部模型與比例的六項指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)。
+同一組 OOF 的固定警示比例敏感度分析如下；**PR-AUC (Average Precision, AP)、AUROC、Brier 不隨警示比例改變**。三來源融合在 Top 5% 與 10% 的 F1 略高，Top 15%～25% 則沒有此優勢。[全部模型與比例的六項指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)。
 
 {chr(10).join(budget_rows)}
 
@@ -364,7 +364,7 @@ def main():
     best_dual = latest_external[latest_external.Model.str.contains("meps|nhanes|dual")].sort_values("AP", ascending=False).iloc[0]
     intro = f"""# 糖尿病 30 天再住院：已完成五折實驗總分析
 
-更新日期：2026-11-23。本報告只使用**已完成五折**且具備六項指標的結果。主要任務是以 UCI Diabetes 130-US Hospitals 的出院時資料預測 30 天內再住院。AP／PR-AUC 是主指標；另完整列出 AUROC、Precision、Recall、F1 與 Brier。
+更新日期：2026-11-23。本報告只使用**已完成五折**且具備六項指標的結果。主要任務是以 UCI Diabetes 130-US Hospitals 的出院時資料預測 30 天內再住院。PR-AUC (Average Precision, AP) 是主指標；另完整列出 AUROC、Precision、Recall、F1 與 Brier。
 
 ## 方法與一致的計算口徑
 

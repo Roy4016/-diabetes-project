@@ -10,7 +10,7 @@
 
 UCI 共 **99,343** 次就醫、**69,990** 位病人，seed **777**，病人互斥五折。所有納入的 OOF 均逐筆核對 Encounter ID、Patient ID、Fold、Label。AP 為 `average_precision_score`；表列六項指標為各測試折的**算術平均**。Precision、Recall、F1 固定取每折預測風險最高 10%。合併所有 OOF 計算的 pooled AP 存在 CSV 的另一欄，不與五折平均混淆。對照資料及 SHA256 見 `source_audit.csv`。
 
-CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資料；正式的外部資料來源限定為 CDC BRFSS、MEPS、CMS HRRP。六項指標的方向為 PR-AUC、AUROC、Precision、Recall、F1 越高越好，Brier 越低越好。
+CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資料；正式的外部資料來源限定為 CDC BRFSS、MEPS、CMS HRRP。六項指標的方向為 PR-AUC (Average Precision, AP)、AUROC、Precision、Recall、F1 越高越好，Brier 越低越好。
 
 先前論文報告的 0.237 AP 使用不同的單次 holdout；它只能作背景參考。公平比較以此處同一 99,343 筆、同五折 OOF 的 Rajpoot HGB 復現（AP 0.228703）及其他同切分模型為準。
 
@@ -18,7 +18,7 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 
 ## 主要 Baseline 與 CCS 融合
 
-| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| Model | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | bhuvan_hgb | 0.228703 | 0.671776 | 0.272004 | 0.238729 | 0.254282 | 0.096042 |
 | roy_hgb_46 | 0.237261 | 0.676968 | 0.279355 | 0.245182 | 0.261155 | 0.095577 |
@@ -29,7 +29,7 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 
 ## CMS HRRP
 
-| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| Model | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | cms_hgb | 0.238496 | 0.678059 | 0.281873 | 0.247390 | 0.263508 | 0.095499 |
 | cms_catboost_raw | 0.246507 | 0.682518 | 0.286103 | 0.251103 | 0.267463 | 0.095083 |
@@ -39,7 +39,7 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 
 ## CDC BRFSS
 
-| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| Model | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | E2_Clinical | 0.234919 | 0.678280 | 0.276334 | 0.242530 | 0.258331 | 0.095664 |
 | E4_Clinical_CDCHealth | 0.235256 | 0.678403 | 0.276939 | 0.243060 | 0.258896 | 0.095640 |
@@ -49,7 +49,7 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 
 ## MEPS
 
-| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| Model | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | ccs_meps_group_hgb | 0.239077 | 0.677884 | 0.282276 | 0.247745 | 0.263885 | 0.095500 |
 | ccs_meps_catboost_raw_50 | 0.247139 | 0.683233 | 0.286103 | 0.251104 | 0.267463 | 0.095087 |
@@ -61,7 +61,7 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 
 這組已完成 **99,343 筆、69,990 位病人、seed 777、相同病人互斥五折**。所有模型的 Precision、Recall、F1 都固定取每折風險最高 10%；其餘三項使用原始預測機率。單一及雙來源列使用同一 Raw ICD-9 CatBoost 架構做配對控制；`cms_meps_cdc_hgb50` 再與 CCS-only HGB 的機率固定 50/50 融合。下表中的 `ccs_only_hgb_catboost_raw_50` 與前文 `ccs_only_catboost_raw_50` 是同一基線預測。[完整六項指標](results/cms_meps_cdc_catboost_seed777/summary.csv)｜[逐折指標](results/cms_meps_cdc_catboost_seed777/fold_metrics.csv)｜[實驗稽核](results/cms_meps_cdc_catboost_seed777/audit.json)。
 
-| 模型 | PR-AUC | AUROC | Precision | Recall | F1 | Brier |
+| 模型 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `catboost_raw` | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
 | `ccs_only_hgb_catboost_raw_50` | 0.247374 | 0.683446 | 0.288620 | 0.253313 | 0.269817 | 0.095068 |
@@ -74,7 +74,7 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 | `cms_meps_cdc` | 0.246367 | 0.683025 | 0.287613 | 0.252429 | 0.268875 | 0.095080 |
 | `cms_meps_cdc_hgb50` | 0.247091 | 0.683464 | 0.291138 | 0.255522 | 0.272170 | 0.095073 |
 
-三來源融合相對無外部資料的 CCS HGB＋Raw CatBoost，平均 **ΔAP -0.000283**；每折內按病人配對抽樣 2,000 次的 95% CI 為 **[-0.000993, +0.000543]**。Top 10% 的 F1 從 **0.269817** 到 **0.272170**，但 AP 較低且配對 CI 跨零，不能宣稱三來源聯合提高主要 PR-AUC。其他配對差值見[完整 bootstrap](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
+三來源融合相對無外部資料的 CCS HGB＋Raw CatBoost，平均 **ΔAP -0.000283**；每折內按病人配對抽樣 2,000 次的 95% CI 為 **[-0.000993, +0.000543]**。Top 10% 的 F1 從 **0.269817** 到 **0.272170**，但 AP 較低且配對 CI 跨零，不能宣稱三來源聯合提高主要 PR-AUC (Average Precision, AP)。其他配對差值見[完整 bootstrap](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
 
 CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它本身不是再住院標籤；MEPS 使用精確日期事件的 CCS 群組 30 天再就醫／再住院統計；CMS 使用四類疾病的全國彙總再住院率，約覆蓋醫院隊列 16.5%。這些欄位以共同人口或診斷資訊對齊；不同資料來源的測量方式與涵蓋範圍，可能限制外部訊號的效益，但本實驗不能判定因果原因。
 
@@ -90,7 +90,7 @@ CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它�
 | `cms_readmission_rate` | 0.003490 | 35 |
 | `cms_mapped` | 0.000835 | 44 |
 
-同一組 OOF 的固定警示比例敏感度分析如下；**PR-AUC、AUROC、Brier 不隨警示比例改變**。三來源融合在 Top 5% 與 10% 的 F1 略高，Top 15%～25% 則沒有此優勢。[全部模型與比例的六項指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)。
+同一組 OOF 的固定警示比例敏感度分析如下；**PR-AUC (Average Precision, AP)、AUROC、Brier 不隨警示比例改變**。三來源融合在 Top 5% 與 10% 的 F1 略高，Top 15%～25% 則沒有此優勢。[全部模型與比例的六項指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)。
 
 | 每折警示比例 | 無外部資料融合 F1 | 三來源融合 F1 |
 | --- | ---: | ---: |
@@ -102,7 +102,7 @@ CDC 使用 BRFSS 糖尿病受訪者的**自評健康不佳代理分數**，它�
 
 ## CatBoost 原始特徵消融
 
-| Model | PR-AUC | AUROC | Precision | Recall | F1 | Brier | Full_minus_Ablated_PR_AUC |
+| Model | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier | Full_minus_Ablated_PR_AUC |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | E0_full_catboost | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 | 0.000000 |
 | E1_no_number_inpatient | 0.220537 | 0.658885 | 0.251158 | 0.220433 | 0.234794 | 0.096609 | 0.025970 |
@@ -132,7 +132,7 @@ CMS 只依 UCI 主要診斷 CCS 對應四個概念：心肌梗塞、心衰竭、
 
 子群分析是在既有五折上探索；各子群的 Precision／Recall／F1 重新以該子群內最高 10% 評估，不能與全體門檻數字直接替換。正例率及樣本數列於下表：
 
-| Subset | Model | N | Positive_Count | Positive_Rate | PR-AUC |
+| Subset | Model | N | Positive_Count | Positive_Rate | PR-AUC (Average Precision, AP) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | CMS-covered | ccs_only_catboost_raw_50 | 16413 | 2011 | 0.122525 | 0.225494 |
 | CMS-covered | ccs_only_hgb_cms_catboost_50 | 16413 | 2011 | 0.122525 | 0.226265 |
@@ -189,7 +189,7 @@ SHAP 只說明模型預測如何使用特徵，不等於移除特徵後的 AP �
 
 ## 可以直接放入 Final Presentation 的文字
 
-> 在相同的 99,343 次就醫、69,990 位病人、seed 777 病人互斥五折下，Raw ICD-9 CatBoost 的平均 PR-AUC 為 0.246506；與 CCS HGB 固定 50/50 融合達 **0.247374**。不含 CCS 的 Raw HGB＋Raw CatBoost 融合為 **0.246225**。CDC、MEPS 與 CMS 均採真實外部資料；在各自同架構配對比較中，尚未確認它們能提升最高的 HGB＋CatBoost 基準。MEPS 30 天共同訓練對同架構神經網路有小幅正差；這與最佳融合模型的比較是不同問題。
+> 在相同的 99,343 次就醫、69,990 位病人、seed 777 病人互斥五折下，Raw ICD-9 CatBoost 的平均 PR-AUC (Average Precision, AP) 為 0.246506；與 CCS HGB 固定 50/50 融合達 **0.247374**。不含 CCS 的 Raw HGB＋Raw CatBoost 融合為 **0.246225**。CDC、MEPS 與 CMS 均採真實外部資料；在各自同架構配對比較中，尚未確認它們能提升最高的 HGB＋CatBoost 基準。MEPS 30 天共同訓練對同架構神經網路有小幅正差；這與最佳融合模型的比較是不同問題。
 
 ## 尚缺或不適用
 

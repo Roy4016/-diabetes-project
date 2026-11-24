@@ -7,7 +7,7 @@
 - UCI 醫院資料 99,343 筆就醫、69,990 位病人；seed 777、病人互斥五折。與既有 HGB／CatBoost OOF 的 encounter、病人、標籤及折別完全一致；每個模型完成 99,343 筆 OOF 預測，沒有缺值或重複 encounter。
 - TabPFN 套件 10.2.0、模型 3.5、本機 CUDA；每折從外層訓練資料抽 5,000 筆 context，`n_estimators=2`。比較 CCS-only 與 CCS＋真實 MEPS 住院事件 CCS 群組特徵。
 - `context_hgb_*` 使用相同 5,000 筆 context，但採固定 HGB 設定。`hgb_tuned`、`ccs_only_hgb` 及 CatBoost 對照使用完整外層訓練資料，不能視為相同訓練量比較。
-- 主要指標 PR-AUC 為 `average_precision_score` 的五折平均。Precision、Recall、F1 用各折測試集最高風險 10% 警示量；Brier、AUROC、AP 不依賴此警示門檻。`Pooled AP` 為合併 OOF 後重算，與五折平均不同。
+- 主要指標 PR-AUC (Average Precision, AP) 為 `average_precision_score` 的五折平均。Precision、Recall、F1 用各折測試集最高風險 10% 警示量；Brier、AUROC、AP 不依賴此警示門檻。`Pooled AP` 為合併 OOF 後重算，與五折平均不同。
 
 ## 完整指標
 
