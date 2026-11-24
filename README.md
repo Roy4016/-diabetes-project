@@ -47,7 +47,7 @@
 
 最後兩列來自[三來源聯合實驗](results/cms_meps_cdc_catboost_seed777/summary.csv)：CDC 是糖尿病受訪者自評健康代理分數，MEPS 是精確日期的事件 CCS 30 天再就醫／再住院群組統計，CMS 是四類疾病全國彙總率。三來源融合相對 CCS HGB＋Raw CatBoost 的 **ΔAP −0.000283**、病人分折 bootstrap 95% CI **[-0.000993, +0.000543]**。不能因 Top 10% 的 F1 略高，就宣稱 AP 有改善。[完整配對比較](results/cms_meps_cdc_catboost_seed777/paired_ap_bootstrap.csv)。
 
-### 已完成的五折 LR、RF、XGBoost 與特徵消融
+### 已完成的五折 LR、RF、XGBoost
 
 早期 LR／RF／XGBoost 已在同一五折切分重跑。下表與上表採相同 **Top 10%** 規則；完整六指標與其他加權／SMOTENC 比例見[重跑結果](results/classic_5fold_recheck_seed777/summary.csv)。
 
@@ -59,7 +59,18 @@
 | XGBoost 類別加權 | 0.221244 | 0.668693 | 0.263041 | 0.230865 | 0.245905 | 0.224077 |
 | XGBoost＋SMOTENC 0.20 | 0.206220 | 0.645952 | 0.244310 | 0.214424 | 0.228394 | 0.097684 |
 
-Raw CatBoost **重新訓練**的消融結果：移除 `number_inpatient` 後 AP **0.220537**（原模型減消融 **+0.025970**，95% CI **[+0.020712, +0.030794]**）；只移除 `diag_1`／`diag_2`／`diag_3` 後 **0.238047**；再移除診斷衍生的 `number_diagnoses` 後 **0.236696**。這與 SHAP 的 `number_inpatient` 排名第一一致，但 SHAP 排名本身不等於消融後的效益。[六項消融指標](results/final_presentation_completion/final_ablation_metrics.csv)｜[病人配對比較](results/final_presentation_completion/final_bootstrap_comparisons.csv)。
+### CatBoost SHAP 引導的特徵消融
+
+E0 沿用完整 Raw ICD-9 CatBoost 的五折 OOF；E1～E3 在**相同病人互斥五折**下移除指定欄位並重新訓練。六項指標為五個測試折的平均；Precision、Recall、F1 使用各折風險最高 **10%**。粗體為此表最佳值，Brier 越低越好。ΔAP 是完整模型 E0 減該消融模型的五折平均 AP。[原始六項指標](results/final_presentation_completion/final_ablation_metrics.csv)｜[病人配對 bootstrap](results/final_presentation_completion/final_bootstrap_comparisons.csv)。
+
+| 實驗／移除欄位 | PR-AUC | AUROC | Precision | Recall | F1 | Brier | E0 − 消融 ΔAP |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| E0：完整 Raw CatBoost | **0.246506** | **0.682839** | **0.285196** | **0.250308** | **0.266616** | **0.095084** | — |
+| E1：`number_inpatient` | 0.220537 | 0.658885 | 0.251158 | 0.220433 | 0.234794 | 0.096609 | +0.025970 |
+| E2：`diag_1`、`diag_2`、`diag_3` | 0.238047 | 0.673475 | 0.280060 | 0.245800 | 0.261814 | 0.095611 | +0.008460 |
+| E3：E2 再移除 `number_diagnoses` | 0.236696 | 0.671660 | 0.277845 | 0.243855 | 0.259743 | 0.095702 | +0.009811 |
+
+E0 − E1 的 ΔAP 病人配對 bootstrap 95% CI 為 **[+0.020712, +0.030794]**；E0 − E2 為 **[+0.005983, +0.010851]**；E0 − E3 為 **[+0.007082, +0.012389]**。三個消融的 AP 都低於完整模型。
 
 這是**依 SHAP 結果挑選部分特徵**做的消融，尚非依排名逐一移除前五名。Raw CatBoost 的 SHAP 前五名依序是 `number_inpatient`、`discharge_disposition_id`、`diag_1`、`diag_3`、`payer_code`。目前已單獨測試第 1 名，也測試了三個原始診斷欄位的**整組**移除；`discharge_disposition_id`、`payer_code` 及各診斷欄位都沒有分別做單一特徵消融。因此診斷欄位整組 AP 下降，不能拆解為 `diag_1`、`diag_2`、`diag_3` 各自的效果。[Raw CatBoost SHAP 排名](results/paper_fair_comparison_seed777/shap_global.csv)。
 
