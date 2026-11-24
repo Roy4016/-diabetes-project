@@ -61,6 +61,8 @@
 
 Raw CatBoost **重新訓練**的消融結果：移除 `number_inpatient` 後 AP **0.220537**（原模型減消融 **+0.025970**，95% CI **[+0.020712, +0.030794]**）；只移除 `diag_1`／`diag_2`／`diag_3` 後 **0.238047**；再移除診斷衍生的 `number_diagnoses` 後 **0.236696**。這與 SHAP 的 `number_inpatient` 排名第一一致，但 SHAP 排名本身不等於消融後的效益。[六項消融指標](results/final_presentation_completion/final_ablation_metrics.csv)｜[病人配對比較](results/final_presentation_completion/final_bootstrap_comparisons.csv)。
 
+這是**依 SHAP 結果挑選部分特徵**做的消融，尚非依排名逐一移除前五名。Raw CatBoost 的 SHAP 前五名依序是 `number_inpatient`、`discharge_disposition_id`、`diag_1`、`diag_3`、`payer_code`。目前已單獨測試第 1 名，也測試了三個原始診斷欄位的**整組**移除；`discharge_disposition_id`、`payer_code` 及各診斷欄位都沒有分別做單一特徵消融。因此診斷欄位整組 AP 下降，不能拆解為 `diag_1`、`diag_2`、`diag_3` 各自的效果。[Raw CatBoost SHAP 排名](results/paper_fair_comparison_seed777/shap_global.csv)。
+
 ### 警示比例與 SHAP
 
 固定取每折最高風險的 **5%、10%、15%、20%、25%**，只重算既有五折 OOF，不重新訓練模型；AP、AUROC、Brier 因此不隨比例改變。[全部模型六指標](results/top_fractions_cms_meps_cdc_5fold_seed777/summary.csv)｜[相對 Top 10% 變化](results/top_fractions_cms_meps_cdc_5fold_seed777/comparison_vs_top10.csv)。
