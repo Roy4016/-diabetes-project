@@ -1,0 +1,107 @@
+{
+  "seed": 777,
+  "folds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "reference_oof": "/media/synology/G/314554044/diabetes_project/results/meps_event_ccs_group_hgb_seed777/oof_all.csv",
+  "paper_oof": "/media/synology/G/314554044/diabetes_project/results/paper_fair_comparison_seed777/oof_all.csv.gz",
+  "ccs_oof": "/media/synology/G/314554044/diabetes_project/results/ccs_catboost_5fold_seed777/oof_all.csv.gz",
+  "cdc_oof": "/media/synology/G/314554044/diabetes_project/results/cms_meps_cdc_catboost_seed777/oof_all.csv.gz",
+  "cms_oof": "/media/synology/G/314554044/diabetes_project/results/cms_group_prior_5fold_seed777/oof_all.csv.gz",
+  "ccs_trials": "/media/synology/G/314554044/diabetes_project/results/ccs_catboost_5fold_seed777/catboost_inner_trials.csv",
+  "paper_trials": "/media/synology/G/314554044/diabetes_project/results/paper_fair_comparison_seed777/catboost_inner_trials.csv",
+  "sources": [
+    "cdc"
+  ],
+  "cdc_teacher": "catboost",
+  "features": {
+    "cdc": [
+      "race",
+      "gender",
+      "age",
+      "admission_type_id",
+      "discharge_disposition_id",
+      "admission_source_id",
+      "time_in_hospital",
+      "payer_code",
+      "medical_specialty",
+      "num_lab_procedures",
+      "num_procedures",
+      "num_medications",
+      "number_outpatient",
+      "number_emergency",
+      "number_inpatient",
+      "diag_1",
+      "diag_2",
+      "diag_3",
+      "number_diagnoses",
+      "max_glu_serum",
+      "A1Cresult",
+      "metformin",
+      "repaglinide",
+      "nateglinide",
+      "chlorpropamide",
+      "glimepiride",
+      "acetohexamide",
+      "glipizide",
+      "glyburide",
+      "tolbutamide",
+      "pioglitazone",
+      "rosiglitazone",
+      "acarbose",
+      "miglitol",
+      "troglitazone",
+      "tolazamide",
+      "examide",
+      "citoglipton",
+      "insulin",
+      "glyburide-metformin",
+      "glipizide-metformin",
+      "glimepiride-pioglitazone",
+      "metformin-rosiglitazone",
+      "metformin-pioglitazone",
+      "change",
+      "diabetesMed",
+      "ccs_diag_1",
+      "ccs_diag_2",
+      "ccs_diag_3",
+      "cdc_poor_health"
+    ]
+  },
+  "feature_audit": {
+    "cdc": {
+      "teacher": "CatBoost",
+      "respondents": 35346,
+      "target": "CDC self-rated general health fair/poor; not readmission",
+      "bridge_features": [
+        "bridge_age",
+        "bridge_sex",
+        "bridge_high_bp",
+        "bridge_high_chol"
+      ],
+      "validation_rows": 7070,
+      "held_out_cdc_ap": 0.4898568352301621,
+      "held_out_cdc_auroc": 0.5970849146849603,
+      "parameters": {
+        "iterations": 300,
+        "depth": 3,
+        "learning_rate": 0.05,
+        "l2_leaf_reg": 2.0
+      }
+    },
+    "cms_mapped_rows": 16413,
+    "ccs_columns": [
+      "ccs_diag_1",
+      "ccs_diag_2",
+      "ccs_diag_3"
+    ]
+  },
+  "fit": "saved train-only raw/CCS CatBoost parameters; refit on each outer training fold",
+  "fusion": "0.5 * saved CCS HGB + 0.5 * CatBoost",
+  "alert_fraction": 0.1,
+  "bootstrap": 2000
+}

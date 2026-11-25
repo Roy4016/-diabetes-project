@@ -3,6 +3,7 @@
 
 The saved CCS/MEPS OOF file defines the exact 99,343-row patient-disjoint split.
 All model selection and oversampling stay inside each outer training fold.
+Optional CCS replacement exchanges diag_1/2/3 for AHRQ CCS categories.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from scipy import sparse
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupShuffleSplit
+from sklearn.metrics import precision_score, recall_score, f1_score
 from xgboost import XGBClassifier
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +29,8 @@ from diabetes_project.features import make_preprocessor  # noqa: E402
 from diabetes_project.metrics import best_f1_threshold, binary_metrics  # noqa: E402
 from diabetes_project.paper_comparison import load_comparison_cohort  # noqa: E402
 from run_meps_hgb import normalize, raw_discharge_predictors  # noqa: E402
+from run_meps_ccs_group_hgb import DIAG, attach_uci_ccs  # noqa: E402
+from train_xgboost_ahrq_ccs_prefix import load_ccs  # noqa: E402
 
 METHODS = (
     "lr_standard", "lr_balanced", "rf_standard", "rf_balanced",
@@ -129,6 +133,12 @@ def estimator(args, method, trees=None, scale_pos_weight=1.0):
 def run(args):
     cohort, folds = read_split(args.input, args.reference_oof)
     columns = raw_discharge_predictors(cohort)
+    if args.diagnosis_representation == "ccs-replace":
+        ccs_map, _ = load_ccs(args.ccs_file)
+        cohort = attach_uci_ccs(cohort, ccs_map)
+        columns = [f"ccs_{column}" if column in DIAG else column for column in columns]
+        if len(columns) != len(set(columns)) or len(columns) != 46:
+            raise ValueError("CCS replacement must retain 46 unique predictors")
     raw, categorical, numeric = normalize(cohort, columns)
     # The shared normalizer identifies categorical ID fields; keep that type
     # in the one-hot preprocessor as well.
@@ -195,13 +205,30 @@ def run(args):
             for policy, cutoff in (("val_f1_optimal", threshold), ("default_0.5", .5)):
                 results.append({"Fold": fold, "Model": method, "ThresholdPolicy": policy,
                                 **binary_metrics(labels[test], test_prob, cutoff)})
+            top_count = max(1, int(np.floor(.10 * len(test))))
+            top_prediction = np.zeros(len(test), dtype=int)
+            top_prediction[np.argsort(-test_prob, kind="mergesort")[:top_count]] = 1
+            top_metrics = binary_metrics(labels[test], test_prob, .5)
+            top_metrics.update({
+                "Precision": precision_score(labels[test], top_prediction, zero_division=0),
+                "Recall": recall_score(labels[test], top_prediction, zero_division=0),
+                "F1": f1_score(labels[test], top_prediction, zero_division=0),
+                "Accuracy": float(np.mean(labels[test] == top_prediction)),
+                "TP": int(np.sum((labels[test] == 1) & (top_prediction == 1))),
+                "FP": int(np.sum((labels[test] == 0) & (top_prediction == 1))),
+                "TN": int(np.sum((labels[test] == 0) & (top_prediction == 0))),
+                "FN": int(np.sum((labels[test] == 1) & (top_prediction == 0))),
+                "threshold": float("nan"),
+            })
+            results.append({"Fold": fold, "Model": method,
+                            "ThresholdPolicy": "top_10pct", **top_metrics})
             predictions.append(pd.DataFrame({
                 "encounter_id": cohort.encounter_id.iloc[test].to_numpy(),
                 "patient_nbr": patients[test], "y_true": labels[test], "Fold": fold,
                 "Model": method, "probability": test_prob,
             }))
-            print(f"[Fold {fold}] {method:13s} AP={results[-2]['PR_AUC_AP']:.6f} "
-                  f"AUROC={results[-2]['AUROC']:.6f}" +
+            print(f"[Fold {fold}] {method:13s} AP={top_metrics['PR_AUC_AP']:.6f} "
+                  f"AUROC={top_metrics['AUROC']:.6f}" +
                   (f" trees={best_trees}" if is_xgb else ""), flush=True)
         pd.DataFrame(results).to_csv(args.outdir / "fold_metrics.csv", index=False)
         pd.concat(predictions, ignore_index=True).to_csv(args.outdir / "oof_long.csv", index=False)
@@ -227,7 +254,10 @@ def run(args):
         "folds_completed": args.max_folds, "seed": args.seed, "methods": args.methods,
         "features": columns, "reference_oof": str(args.reference_oof.resolve()),
         "device": args.device, "validation": "patient-disjoint 20% of outer train",
+        "diagnosis_representation": args.diagnosis_representation,
+        "ccs_file": str(args.ccs_file.resolve()) if args.diagnosis_representation == "ccs-replace" else None,
         "selection": "XGBoost: validation AUCPR early stopping; all models: validation F1 threshold; refit full outer train",
+        "threshold_policies": ["val_f1_optimal", "default_0.5", "top_10pct"],
         "primary_metric": "sklearn average_precision_score",
     }, indent=2), encoding="utf-8")
     print(summary.round(6).to_string(index=False), flush=True)
@@ -238,7 +268,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=ROOT / "data/raw/uci/diabetic_data.csv")
     parser.add_argument("--reference-oof", type=Path, default=ROOT / "results/meps_ccs_group_hgb_seed777/oof_all.csv")
-    parser.add_argument("--outdir", type=Path, default=ROOT / "results/classic_5fold_recheck_seed777")
+    parser.add_argument("--outdir", type=Path)
+    parser.add_argument("--diagnosis-representation", choices=("raw", "ccs-replace"), default="raw")
+    parser.add_argument("--ccs-file", type=Path, default=ROOT / "data/raw/ahrq/Single_Level_CCS_2015.zip")
     parser.add_argument("--methods", nargs="+", choices=METHODS, default=list(METHODS))
     parser.add_argument("--max-folds", type=int, choices=range(1, 6), default=5)
     parser.add_argument("--n-estimators", type=int, default=500)
@@ -252,6 +284,9 @@ def main():
     parser.add_argument("--seed", type=int, default=777)
     parser.add_argument("--n-jobs", type=int, default=8)
     args = parser.parse_args()
+    if args.outdir is None:
+        directory = "classic_ccs_replacement_5fold_seed777" if args.diagnosis_representation == "ccs-replace" else "classic_5fold_recheck_seed777"
+        args.outdir = ROOT / "results" / directory
     run(args)
 
 
