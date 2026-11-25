@@ -1,0 +1,76 @@
+Model,Representation,Fold,Input_Features,Encoded_Features
+CatBoost,CCS Replacement,1,46,model-native; not fixed
+CatBoost,CCS Replacement,2,46,model-native; not fixed
+CatBoost,CCS Replacement,3,46,model-native; not fixed
+CatBoost,CCS Replacement,4,46,model-native; not fixed
+CatBoost,CCS Replacement,5,46,model-native; not fixed
+CatBoost,Raw,1,46,model-native; not fixed
+CatBoost,Raw,2,46,model-native; not fixed
+CatBoost,Raw,3,46,model-native; not fixed
+CatBoost,Raw,4,46,model-native; not fixed
+CatBoost,Raw,5,46,model-native; not fixed
+CatBoost,Raw + CCS,1,49,model-native; not fixed
+CatBoost,Raw + CCS,2,49,model-native; not fixed
+CatBoost,Raw + CCS,3,49,model-native; not fixed
+CatBoost,Raw + CCS,4,49,model-native; not fixed
+CatBoost,Raw + CCS,5,49,model-native; not fixed
+HGB,CCS Replacement,1,46,356
+HGB,CCS Replacement,2,46,355
+HGB,CCS Replacement,3,46,361
+HGB,CCS Replacement,4,46,356
+HGB,CCS Replacement,5,46,357
+HGB,Raw,1,46,516
+HGB,Raw,2,46,519
+HGB,Raw,3,46,519
+HGB,Raw,4,46,517
+HGB,Raw,5,46,520
+HGB,Raw + CCS,1,49,700
+HGB,Raw + CCS,2,49,703
+HGB,Raw + CCS,3,49,707
+HGB,Raw + CCS,4,49,703
+HGB,Raw + CCS,5,49,705
+LR,CCS Replacement,1,46,848
+LR,CCS Replacement,2,46,851
+LR,CCS Replacement,3,46,850
+LR,CCS Replacement,4,46,850
+LR,CCS Replacement,5,46,850
+LR,Raw,1,46,2416
+LR,Raw,2,46,2402
+LR,Raw,3,46,2414
+LR,Raw,4,46,2418
+LR,Raw,5,46,2405
+LR,Raw + CCS,1,49,3022
+LR,Raw + CCS,2,49,3012
+LR,Raw + CCS,3,49,3026
+LR,Raw + CCS,4,49,3030
+LR,Raw + CCS,5,49,3013
+RF,CCS Replacement,1,46,848
+RF,CCS Replacement,2,46,851
+RF,CCS Replacement,3,46,850
+RF,CCS Replacement,4,46,850
+RF,CCS Replacement,5,46,850
+RF,Raw,1,46,2416
+RF,Raw,2,46,2402
+RF,Raw,3,46,2414
+RF,Raw,4,46,2418
+RF,Raw,5,46,2405
+RF,Raw + CCS,1,49,3022
+RF,Raw + CCS,2,49,3012
+RF,Raw + CCS,3,49,3026
+RF,Raw + CCS,4,49,3030
+RF,Raw + CCS,5,49,3013
+XGBoost,CCS Replacement,1,46,848
+XGBoost,CCS Replacement,2,46,851
+XGBoost,CCS Replacement,3,46,850
+XGBoost,CCS Replacement,4,46,850
+XGBoost,CCS Replacement,5,46,850
+XGBoost,Raw,1,46,2416
+XGBoost,Raw,2,46,2402
+XGBoost,Raw,3,46,2414
+XGBoost,Raw,4,46,2418
+XGBoost,Raw,5,46,2405
+XGBoost,Raw + CCS,1,49,3022
+XGBoost,Raw + CCS,2,49,3012
+XGBoost,Raw + CCS,3,49,3026
+XGBoost,Raw + CCS,4,49,3030
+XGBoost,Raw + CCS,5,49,3013

@@ -1,0 +1,14 @@
+{
+  "seed": 777,
+  "outer_folds": 5,
+  "rows": 99343,
+  "patients": 69990,
+  "source_oof": "/media/synology/G/314554044/diabetes_project/results/diagnosis_raw_ccs_5fold/oof_all.csv.gz",
+  "reference_oof": "/media/synology/G/314554044/diabetes_project/results/meps_ccs_group_hgb_seed777/oof_all.csv",
+  "predictions": {
+    "Raw HGB + Raw+CCS CatBoost": "0.5*HGB__Raw + 0.5*CatBoost__Raw_plus_CCS",
+    "Raw+CCS HGB + Raw+CCS CatBoost": "0.5*HGB__Raw_plus_CCS + 0.5*CatBoost__Raw_plus_CCS"
+  },
+  "threshold_policy": "top 10% highest risk within each outer fold",
+  "bootstrap": "2000 paired patient resamples within fold"
+}

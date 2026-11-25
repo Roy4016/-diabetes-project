@@ -4,6 +4,7 @@
 The saved CCS/MEPS OOF file defines the exact 99,343-row patient-disjoint split.
 All model selection and oversampling stay inside each outer training fold.
 Optional CCS replacement exchanges diag_1/2/3 for AHRQ CCS categories.
+Optional CCS augmentation retains all 46 raw predictors and appends 3 CCS fields.
 """
 
 from __future__ import annotations
@@ -133,12 +134,16 @@ def estimator(args, method, trees=None, scale_pos_weight=1.0):
 def run(args):
     cohort, folds = read_split(args.input, args.reference_oof)
     columns = raw_discharge_predictors(cohort)
-    if args.diagnosis_representation == "ccs-replace":
+    if args.diagnosis_representation in ("ccs-replace", "ccs-append"):
         ccs_map, _ = load_ccs(args.ccs_file)
         cohort = attach_uci_ccs(cohort, ccs_map)
-        columns = [f"ccs_{column}" if column in DIAG else column for column in columns]
-        if len(columns) != len(set(columns)) or len(columns) != 46:
-            raise ValueError("CCS replacement must retain 46 unique predictors")
+        if args.diagnosis_representation == "ccs-replace":
+            columns = [f"ccs_{column}" if column in DIAG else column for column in columns]
+        else:
+            columns += [f"ccs_{column}" for column in DIAG]
+        expected = 49 if args.diagnosis_representation == "ccs-append" else 46
+        if len(columns) != len(set(columns)) or len(columns) != expected:
+            raise ValueError(f"Expected {expected} unique predictors")
     raw, categorical, numeric = normalize(cohort, columns)
     # The shared normalizer identifies categorical ID fields; keep that type
     # in the one-hot preprocessor as well.
@@ -255,7 +260,7 @@ def run(args):
         "features": columns, "reference_oof": str(args.reference_oof.resolve()),
         "device": args.device, "validation": "patient-disjoint 20% of outer train",
         "diagnosis_representation": args.diagnosis_representation,
-        "ccs_file": str(args.ccs_file.resolve()) if args.diagnosis_representation == "ccs-replace" else None,
+        "ccs_file": str(args.ccs_file.resolve()) if args.diagnosis_representation != "raw" else None,
         "selection": "XGBoost: validation AUCPR early stopping; all models: validation F1 threshold; refit full outer train",
         "threshold_policies": ["val_f1_optimal", "default_0.5", "top_10pct"],
         "primary_metric": "sklearn average_precision_score",
@@ -269,7 +274,7 @@ def main():
     parser.add_argument("--input", type=Path, default=ROOT / "data/raw/uci/diabetic_data.csv")
     parser.add_argument("--reference-oof", type=Path, default=ROOT / "results/meps_ccs_group_hgb_seed777/oof_all.csv")
     parser.add_argument("--outdir", type=Path)
-    parser.add_argument("--diagnosis-representation", choices=("raw", "ccs-replace"), default="raw")
+    parser.add_argument("--diagnosis-representation", choices=("raw", "ccs-replace", "ccs-append"), default="raw")
     parser.add_argument("--ccs-file", type=Path, default=ROOT / "data/raw/ahrq/Single_Level_CCS_2015.zip")
     parser.add_argument("--methods", nargs="+", choices=METHODS, default=list(METHODS))
     parser.add_argument("--max-folds", type=int, choices=range(1, 6), default=5)
@@ -285,7 +290,9 @@ def main():
     parser.add_argument("--n-jobs", type=int, default=8)
     args = parser.parse_args()
     if args.outdir is None:
-        directory = "classic_ccs_replacement_5fold_seed777" if args.diagnosis_representation == "ccs-replace" else "classic_5fold_recheck_seed777"
+        directory = {"raw": "classic_5fold_recheck_seed777",
+                     "ccs-replace": "classic_ccs_replacement_5fold_seed777",
+                     "ccs-append": "classic_ccs_augmentation_5fold_seed777"}[args.diagnosis_representation]
         args.outdir = ROOT / "results" / directory
     run(args)
 

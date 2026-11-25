@@ -1,0 +1,19 @@
+{
+  "seed": 777,
+  "folds": 5,
+  "cohort_rows": 99343,
+  "patients": 69990,
+  "reference_oof": "/media/synology/G/314554044/diabetes_project/results/meps_ccs_group_hgb_seed777/oof_all.csv",
+  "sources": {
+    "classic_raw": "/media/synology/G/314554044/diabetes_project/results/diagnosis_raw_ccs_5fold/classic_raw/oof_long.csv",
+    "classic_replace": "/media/synology/G/314554044/diabetes_project/results/diagnosis_raw_ccs_5fold/classic_replace/oof_long.csv",
+    "classic_append": "/media/synology/G/314554044/diabetes_project/results/diagnosis_raw_ccs_5fold/classic_append/oof_long.csv",
+    "hgb": "/media/synology/G/314554044/diabetes_project/results/diagnosis_raw_ccs_5fold/hgb_controlled/oof_all.csv.gz",
+    "catboost": "/media/synology/G/314554044/diabetes_project/results/ccs_catboost_5fold_seed777/oof_all.csv.gz"
+  },
+  "threshold_policy": "top 10% highest risk per outer fold",
+  "bootstrap": "patient resampling within fold, paired AP/AUROC/top-10%-F1/Brier, 2000 replicates",
+  "metric": "sklearn average_precision_score; arithmetic mean over five folds",
+  "reuse": "CatBoost raw, replacement, append",
+  "new_training": "LR/RF/XGB raw, replacement, append on CPU; all three HGB variants"
+}

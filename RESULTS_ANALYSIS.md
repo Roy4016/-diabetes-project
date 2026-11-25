@@ -1,6 +1,6 @@
 # 糖尿病 30 天再住院：五折實驗與完整結果分析
 
-更新日期：2026-11-25。正式比較限於同一 99,343 筆、seed 777 病人互斥五折；CDC、MEPS、CMS 為正式 external data。下方「最終 External Data 單來源接法」以 CDC CatBoost Teacher、全疾病 MEPS Teacher、CMS HRRP 的 **1／2／2 個欄位**為準；先前 XGBoost Teacher、四欄 MEPS 統計與三來源聯合實驗保留於歷史紀錄，不與新版混稱。
+更新日期：2026-11-26。正式比較限於同一 99,343 筆、seed 777 病人互斥五折；CDC、MEPS、CMS 為正式 external data。下方「最終 External Data 單來源接法」以 CDC CatBoost Teacher、全疾病 MEPS Teacher、CMS HRRP 的 **1／2／2 個欄位**為準；先前 XGBoost Teacher、四欄 MEPS 統計與三來源聯合實驗保留於歷史紀錄，不與新版混稱。
 
 原有正式主表由 `complete_final_presentation.py` 與 `build_results_analysis.py` 產生；本次另依後續實驗各自保存的五折摘要及配對分析補充章節。重新執行舊報告產生器可能覆寫新增段落，更新報告時請先保留本檔。正式比較不使用早期單次 holdout、99,340 筆隊列或其他 seed。
 
@@ -37,6 +37,43 @@ CCS 是 ICD-9 疾病分類表，單獨使用 CCS 不算加入患者級外部資�
 | `ccs_hgb_catboost_raw_plus_ccs_50` | **0.247388** | **0.683406** | **0.288016** | **0.252783** | **0.269252** | **0.095055** |
 | `catboost_ccs_replace_diag` | 0.244229 | 0.679118 | 0.280866 | 0.246507 | 0.262567 | 0.095234 |
 | `ccs_hgb_catboost_ccs_replace_diag_50` | 0.246786 | 0.681939 | 0.287714 | 0.252518 | 0.268969 | 0.095111 |
+
+### 受控診斷表示：Raw、CCS Replacement、Raw + CCS
+
+此補充實驗在相同 99,343 筆與 seed 777 病人互斥五折下，對五種模型比較三種輸入：Raw 保留 46 個原始出院欄位；CCS Replacement 以 `ccs_diag_1/2/3` 取代 `diag_1/2/3`，仍為 46 欄；Raw + CCS 保留原始診斷碼並新增三個 CCS 欄位，合計 49 欄。這裡的 CCS 是公開分類表，**不算 MEPS 等患者資料的接入**。LR、RF、XGBoost 三種表示均以同一套 CPU 預處理與選參策略重新訓練；HGB 三種表示亦以一致的內層驗證程序重新訓練；CatBoost 三種表示重用已核對同折、同訓練策略的 OOF。這是表示法的受控比較，與另列的 Salim-style 或 Rajpoot 論文復現設定不同。[完整摘要](results/diagnosis_raw_ccs_5fold/raw_ccs_5fold_summary.csv)｜[每折指標](results/diagnosis_raw_ccs_5fold/fold_metrics.csv)｜[特徵維度](results/diagnosis_raw_ccs_5fold/feature_counts.csv)｜[設定](results/diagnosis_raw_ccs_5fold/run.json)。
+
+| Model | 診斷表示 | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| LR | Raw | 0.212744 | 0.656468 | 0.261128 | 0.229185 | 0.244116 | 0.097284 |
+| LR | CCS Replacement | **0.213274** | 0.660160 | 0.260926 | 0.229007 | 0.243927 | **0.097085** |
+| LR | Raw + CCS | 0.211677 | 0.654964 | 0.259517 | 0.227771 | 0.242610 | 0.097408 |
+| RF | Raw | 0.222174 | 0.670451 | 0.267976 | 0.235194 | 0.250517 | 0.098313 |
+| RF | CCS Replacement | **0.224593** | 0.672140 | 0.270292 | 0.237226 | 0.252682 | **0.097616** |
+| RF | Raw + CCS | 0.220492 | 0.669773 | 0.264753 | 0.232365 | 0.247504 | 0.098412 |
+| XGBoost | Raw | 0.228613 | 0.671367 | 0.270695 | 0.237582 | 0.253060 | 0.096189 |
+| XGBoost | CCS Replacement | 0.229900 | 0.673298 | 0.271803 | 0.238553 | 0.254094 | 0.095979 |
+| XGBoost | Raw + CCS | **0.232339** | 0.674912 | 0.275730 | 0.242000 | 0.257766 | **0.095847** |
+| HGB | Raw | 0.237247 | 0.676933 | 0.279557 | 0.245358 | 0.261343 | 0.095573 |
+| HGB | CCS Replacement | 0.235817 | 0.676216 | 0.279053 | 0.244915 | 0.260872 | 0.095651 |
+| HGB | Raw + CCS | **0.239179** | 0.678333 | 0.284491 | 0.249688 | 0.265956 | **0.095470** |
+| CatBoost | Raw | 0.246506 | 0.682839 | 0.285196 | 0.250308 | 0.266616 | 0.095084 |
+| CatBoost | CCS Replacement | 0.244229 | 0.679118 | 0.280866 | 0.246507 | 0.262567 | 0.095234 |
+| CatBoost | Raw + CCS | **0.246917** | 0.682729 | 0.285096 | 0.250219 | 0.266521 | **0.095059** |
+
+表中 Precision、Recall、F1 均採各測試折風險最高 10%，六指標為五折算術平均；pooled OOF AP 另見摘要。粗體 AP 與 Brier 僅標出**同一模型內**的最佳值。Raw + CCS − Raw 的平均 ΔAP／2,000 次折內病人配對 bootstrap 95% CI：LR **−0.001067**／[−0.001696, −0.000450]；RF **−0.001682**／[−0.003638, +0.000300]；XGBoost **+0.003726**／[+0.002220, +0.005264]；HGB **+0.001932**／[+0.000493, +0.003435]；CatBoost **+0.000410**／[−0.000782, +0.001849]。XGBoost、HGB 的 CI 為正；CatBoost 的 CI 跨零。這些是多次探索後的單項 CI，未作多重比較校正。[完整差值及 CI](results/diagnosis_raw_ccs_5fold/diagnosis_representation_bootstrap.csv)。先前獨立重跑的 CCS Replacement XGBoost AP 0.229885 與此處受控重跑的 0.229900 略有差異，正式表示法比較以本表同設定結果為準。
+
+### 固定 50/50 融合：HGB、CatBoost 的 Raw + CCS，以及全疾病 MEPS
+
+沿用上述受控 OOF，先比較 `0.5 × Raw HGB + 0.5 × Raw+CCS CatBoost` 與 `0.5 × Raw+CCS HGB + 0.5 × Raw+CCS CatBoost`。MEPS 版本只在 **CatBoost** 增加全疾病 Teacher 的 `meps_30d_teacher_risk`、`meps_ccs_log_support` 兩欄；HGB 仍依列名使用原有 Raw 或 Raw+CCS 模型，未接入 MEPS。每組都逐筆核對 encounter、patient、label、fold，且 MEPS 已存融合與本次重新組合的 OOF 相同。融合為原始預測機率的 50/50 平均，沒有重新選權重或校準。[四組摘要](results/raw_ccs_hgb_catboost_meps_all_disease_seed777/summary.csv)｜[逐折指標](results/raw_ccs_hgb_catboost_meps_all_disease_seed777/fold_metrics.csv)｜[配對 bootstrap](results/raw_ccs_hgb_catboost_meps_all_disease_seed777/paired_bootstrap.csv)。
+
+| Ensemble | PR-AUC (Average Precision, AP) | AUROC | Precision | Recall | F1 | Brier |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Raw HGB + Raw+CCS CatBoost | 0.246554 | 0.682765 | 0.286506 | 0.251457 | 0.267839 | 0.095105 |
+| Raw HGB + Raw+CCS CatBoost + MEPS 全疾病 | 0.246784 | 0.682877 | 0.287009 | 0.251900 | 0.268311 | 0.095094 |
+| Raw+CCS HGB + Raw+CCS CatBoost | 0.247388 | 0.683406 | 0.288016 | 0.252783 | 0.269252 | 0.095055 |
+| Raw+CCS HGB + Raw+CCS CatBoost + MEPS 全疾病 | **0.247526** | **0.683539** | **0.288721** | **0.253402** | **0.269911** | **0.095043** |
+
+相同 CatBoost、無 MEPS 時，HGB 加 CCS 的平均 ΔAP **+0.000833**，95% CI **[+0.000115, +0.001635]**。在 Raw HGB 組合加入 MEPS，ΔAP **+0.000230**，CI **[−0.000395, +0.000834]**；在 Raw+CCS HGB 組合加入 MEPS，ΔAP **+0.000138**，CI **[−0.000487, +0.000750]**。因此本次四組中最後一組的點估計最高，但**MEPS 本身的增量 CI 仍跨零**，不能宣稱已證實改善。這兩個 MEPS CI 是本次共同抽樣重算的數值；先前獨立實驗相同點估計的 CI 因 bootstrap 抽樣序列不同略有差異。[重現腳本](scripts/experiments/compare_raw_ccs_hgb_catboost_ensemble.py)。
 
 ### LR、RF、XGBoost 的 CCS Replacement
 
